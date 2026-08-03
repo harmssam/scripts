@@ -2,7 +2,8 @@
 export const DEFAULT_FAILURE_THRESHOLD = 2;
 
 export interface HealthTracker {
-  recordFailure(planId: string, cooldownSeconds: number): void;
+  /** Optional statusCode: 429 enters cooldown immediately. */
+  recordFailure(planId: string, cooldownSeconds: number, statusCode?: number): void;
   recordSuccess(planId: string): void;
   isAvailable(planId: string): boolean;
   status(planId: string): 'ok' | 'degraded' | 'cooldown';

@@ -134,11 +134,15 @@ function parseRoute(raw: unknown, index: number): ModelRoute {
   if (targetType !== 'group' && targetType !== 'plan') {
     throw new ConfigValidationError(`${ctx}: targetType must be "group" or "plan"`);
   }
+  const upstreamModel = optionalString(raw, 'upstreamModel');
   return {
     id: requireString(raw, 'id', ctx),
     model: requireString(raw, 'model', ctx),
     targetType,
     targetId: requireString(raw, 'targetId', ctx),
+    ...(upstreamModel !== undefined && upstreamModel.trim() !== ''
+      ? { upstreamModel }
+      : {}),
   };
 }
 

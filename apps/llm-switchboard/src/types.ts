@@ -24,6 +24,8 @@ export interface ModelRoute {
   model: string; // virtual model clients request
   targetType: 'group' | 'plan';
   targetId: string;
+  /** If set, rewrite body.model when calling upstream (virtual id stays for clients). */
+  upstreamModel?: string;
 }
 
 export interface Settings {
