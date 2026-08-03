@@ -1,16 +1,25 @@
 # LLM Switchboard example config
-# Copy to ~/.llm-switchboard/config.yaml and edit.
-# Secrets may use ${ENV_VAR} placeholders (resolved at runtime for upstream calls).
+# Copy to ~/.llm-switchboard/config.yaml and edit:
+#   mkdir -p ~/.llm-switchboard
+#   cp config.example.yaml ~/.llm-switchboard/config.yaml
+#
+# Secrets may use ${ENV_VAR} placeholders (resolved at runtime for upstream calls
+# and gateway auth). Set real values or export the env vars before starting.
+#
+# Schema version 1 — plans, groups, routes, optional defaultRoute.
+# See README.md for concepts and env overrides (SWITCHBOARD_CONFIG, etc.).
 
 version: 1
 
 settings:
+  # Clients authenticate with this key (Bearer). Required.
   gatewayKey: ${SWITCHBOARD_GATEWAY_KEY}
   requestTimeoutMs: 120000
   maxFailoverAttempts: 3
   host: 127.0.0.1
   port: 8787
 
+# Plans = upstream credential sets (OpenAI-compatible base URL + key).
 plans:
   - id: openai-main
     name: OpenAI Main
@@ -21,11 +30,14 @@ plans:
 
   - id: local-opencode
     name: Local OpenCode
+    # OpenCode (or any openai-compat server) as an upstream plan
     baseUrl: http://127.0.0.1:4096/v1
     apiKey: ${OPENCODE_API_KEY}
     providerType: openai-compat
     enabled: true
 
+# Equivalence groups = interchangeable plans for load-share / failover.
+# strategy: equal (round-robin) | priority (try planIds in order)
 groups:
   - id: chat-default
     name: Chat default
@@ -35,12 +47,24 @@ groups:
       - local-opencode
     cooldownSeconds: 120
 
+# Model routes: virtual model id clients request → group or pinned plan.
+# Optional upstreamModel: rewrite body.model when calling the provider
+# (clients still use the virtual `model` id).
 routes:
   - id: route-gpt4o
     model: gpt-4o
     targetType: group
     targetId: chat-default
+    # upstreamModel: gpt-4o-2024-08-06
 
+  - id: route-chat
+    model: chat
+    targetType: group
+    targetId: chat-default
+    # Example: clients ask for "chat"; upstream expects a concrete model name.
+    # upstreamModel: gpt-4o-mini
+
+# Fallback when the requested model has no explicit route.
 defaultRoute:
   targetType: group
   targetId: chat-default
