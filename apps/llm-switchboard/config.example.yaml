@@ -1,0 +1,46 @@
+# LLM Switchboard example config
+# Copy to ~/.llm-switchboard/config.yaml and edit.
+# Secrets may use ${ENV_VAR} placeholders (resolved at runtime for upstream calls).
+
+version: 1
+
+settings:
+  gatewayKey: ${SWITCHBOARD_GATEWAY_KEY}
+  requestTimeoutMs: 120000
+  maxFailoverAttempts: 3
+  host: 127.0.0.1
+  port: 8787
+
+plans:
+  - id: openai-main
+    name: OpenAI Main
+    baseUrl: https://api.openai.com/v1
+    apiKey: ${OPENAI_API_KEY}
+    providerType: openai-compat
+    enabled: true
+
+  - id: local-opencode
+    name: Local OpenCode
+    baseUrl: http://127.0.0.1:4096/v1
+    apiKey: ${OPENCODE_API_KEY}
+    providerType: openai-compat
+    enabled: true
+
+groups:
+  - id: chat-default
+    name: Chat default
+    strategy: equal
+    planIds:
+      - openai-main
+      - local-opencode
+    cooldownSeconds: 120
+
+routes:
+  - id: route-gpt4o
+    model: gpt-4o
+    targetType: group
+    targetId: chat-default
+
+defaultRoute:
+  targetType: group
+  targetId: chat-default
