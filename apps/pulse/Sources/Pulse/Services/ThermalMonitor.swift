@@ -6,7 +6,14 @@ actor ThermalMonitor {
     private var cachedTemp = TempSnapshot.unavailable
     private var cachedFans = FanSnapshot.unavailable
     private var lastSampleTime: Date?
-    private let sampleInterval: TimeInterval = 3
+    private let sampleInterval: TimeInterval
+
+    /// Keys that last returned a value in 20...130. Empty means probe the full list.
+    private var workingCPUKeys: [String] = []
+    private var workingGPUKeys: [String] = []
+
+    private let readFloat: @Sendable (String) async -> Double?
+    private let usesExternalProbe: Bool
 
     private let cpuKeys: [String] = [
         "Tp09", "Tp0T", "Tp01", "Tp05", "Tp0D", "Tp0H", "Tp0L", "Tp0P", "Tp0X", "Tp0b",
@@ -24,9 +31,20 @@ actor ThermalMonitor {
         "Tg0f", "Tg0j",
         "Tg04", "Tg0C", "Tg0K", "Tg0S",
         "Tf14", "Tf18", "Tf19", "Tf1A", "Tf24", "Tf28", "Tf29", "Tf2A",
-        "Tg0G", "Tg0H", "Tg1U", "Tg1k", "Tg0d", "Tg0e", "Tg0j", "Tg0k",
+        "Tg0G", "Tg0H", "Tg1U", "Tg1k", "Tg0d", "Tg0e", "Tg0k",
         "TG0D", "TG0P", "TG0H"
     ]
+
+    init(
+        sampleInterval: TimeInterval = 3,
+        readFloat: (@Sendable (String) async -> Double?)? = nil
+    ) {
+        self.sampleInterval = sampleInterval
+        self.usesExternalProbe = readFloat != nil
+        self.readFloat = readFloat ?? { key in
+            await SMCService.shared.readFloat(key: key)
+        }
+    }
 
     func sample() async -> (temp: TempSnapshot, fans: FanSnapshot) {
         let now = Date()
@@ -37,14 +55,16 @@ actor ThermalMonitor {
 
         CrashReporter.breadcrumb("ThermalMonitor.sample start")
 
-        guard await SMCService.shared.isConnected else {
-            AppLogger.error("SMC not connected for thermal reading", category: AppLogger.monitor)
-            defer { lastSampleTime = Date() }
-            return (cachedTemp, cachedFans)
+        if !usesExternalProbe {
+            guard await SMCService.shared.isConnected else {
+                AppLogger.error("SMC not connected for thermal reading", category: AppLogger.monitor)
+                defer { lastSampleTime = Date() }
+                return (cachedTemp, cachedFans)
+            }
         }
 
         let temp = await sampleTemperatures()
-        let fans = await sampleFans()
+        let fans = usesExternalProbe ? FanSnapshot.unavailable : await sampleFans()
 
         cachedTemp = temp
         cachedFans = fans
@@ -54,27 +74,36 @@ actor ThermalMonitor {
     }
 
     private func sampleTemperatures() async -> TempSnapshot {
-        let cpu = await readMaxTemperature(from: cpuKeys)
-        let gpu = await readMaxTemperature(from: gpuKeys)
+        let cpuProbe = workingCPUKeys.isEmpty ? cpuKeys : workingCPUKeys
+        let gpuProbe = workingGPUKeys.isEmpty ? gpuKeys : workingGPUKeys
 
-        let cpuC = cpu.flatMap { (20.0...130.0).contains($0) ? $0 : nil }
-        let gpuC = gpu.flatMap { (20.0...130.0).contains($0) ? $0 : nil }
+        let (cpu, cpuHits) = await readMaxTemperature(from: cpuProbe)
+        let (gpu, gpuHits) = await readMaxTemperature(from: gpuProbe)
 
-        if cpuC == nil && gpuC == nil {
+        workingCPUKeys = cpuHits
+        workingGPUKeys = gpuHits
+
+        if cpu == nil && gpu == nil {
             AppLogger.debug("No valid temperature readings from SMC", category: AppLogger.monitor)
             return .unavailable
         }
-        return TempSnapshot(cpuTemperature: cpuC, gpuTemperature: gpuC)
+        return TempSnapshot(cpuTemperature: cpu, gpuTemperature: gpu)
     }
 
-    private func readMaxTemperature(from keys: [String]) async -> Double? {
+    private func readMaxTemperature(from keys: [String]) async -> (Double?, [String]) {
         var maxValue: Double = 0
+        var hits: [String] = []
+        var seen = Set<String>()
         for key in keys {
-            if let value = await SMCService.shared.readFloat(key: key), value > maxValue {
+            guard seen.insert(key).inserted else { continue }
+            guard let value = await readFloat(key) else { continue }
+            guard (20.0...130.0).contains(value) else { continue }
+            hits.append(key)
+            if value > maxValue {
                 maxValue = value
             }
         }
-        return maxValue > 0 ? maxValue : nil
+        return (maxValue > 0 ? maxValue : nil, hits)
     }
 
     private func sampleFans() async -> FanSnapshot {
