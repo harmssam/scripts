@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 actor NetworkMonitor {
@@ -18,7 +19,7 @@ actor NetworkMonitor {
     private let nettopTimeout: TimeInterval = 10
 
     func sampleRates() async -> (bytesIn: UInt64, bytesOut: UInt64) {
-        let current = await readInterfaceStats()
+        let current = readInterfaceStats()
         let now = Date()
 
         defer {
@@ -30,22 +31,11 @@ actor NetworkMonitor {
             return (0, 0)
         }
 
-        let elapsed = now.timeIntervalSince(previousTime)
-        guard elapsed > 0 else { return (0, 0) }
-
-        var totalIn: UInt64 = 0
-        var totalOut: UInt64 = 0
-
-        for stat in current where !stat.name.hasPrefix("lo") {
-            guard let previous = previousStats[stat.name] else { continue }
-
-            let deltaIn = stat.bytesIn >= previous.bytesIn ? stat.bytesIn - previous.bytesIn : stat.bytesIn
-            let deltaOut = stat.bytesOut >= previous.bytesOut ? stat.bytesOut - previous.bytesOut : stat.bytesOut
-            totalIn += Self.rate(deltaBytes: deltaIn, elapsed: elapsed)
-            totalOut += Self.rate(deltaBytes: deltaOut, elapsed: elapsed)
-        }
-
-        return (totalIn, totalOut)
+        return Self.interfaceRates(
+            current: current,
+            previous: previousStats,
+            elapsed: now.timeIntervalSince(previousTime)
+        )
     }
 
     func sampleProcesses(limit: Int = 5) async -> [NetworkProcessActivity] {
@@ -125,46 +115,56 @@ actor NetworkMonitor {
         return cachedProcesses
     }
 
-    private func readInterfaceStats() async -> [InterfaceStats] {
-        guard let output = try? await ProcessRunner.run(
-            executable: "/usr/sbin/netstat",
-            arguments: ["-ib"]
-        ) else {
-            return []
-        }
-        return parseNetstatOutput(output)
-    }
+    private func readInterfaceStats() -> [InterfaceStats] {
+        var ifaddrList: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddrList) == 0, let first = ifaddrList else { return [] }
+        defer { freeifaddrs(first) }
 
-    func parseNetstatOutput(_ output: String) -> [InterfaceStats] {
-        var stats: [String: InterfaceStats] = [:]
-
-        for line in output.components(separatedBy: "\n").dropFirst() {
-            let columns = line.split(separator: " ", omittingEmptySubsequences: true)
-            guard columns.count >= 10,
-                  let packetsIn = UInt64(columns[4]),
-                  let bytesIn = UInt64(columns[6]),
-                  let packetsOut = UInt64(columns[7]),
-                  let bytesOut = UInt64(columns[9]) else {
+        var rows: [(name: String, bytesIn: UInt64, bytesOut: UInt64)] = []
+        var ptr: UnsafeMutablePointer<ifaddrs>? = first
+        while let addr = ptr {
+            defer { ptr = addr.pointee.ifa_next }
+            guard let sa = addr.pointee.ifa_addr, sa.pointee.sa_family == sa_family_t(AF_LINK) else {
                 continue
             }
+            guard let data = addr.pointee.ifa_data else { continue }
+            let name = String(cString: addr.pointee.ifa_name)
+            let ifdata = data.assumingMemoryBound(to: if_data.self).pointee
+            rows.append((name, UInt64(ifdata.ifi_ibytes), UInt64(ifdata.ifi_obytes)))
+        }
+        return Self.interfaceStats(from: rows)
+    }
 
-            let name = String(columns[0])
-            if var existing = stats[name] {
-                existing = InterfaceStats(
-                    name: name,
-                    bytesIn: existing.bytesIn + bytesIn,
-                    bytesOut: existing.bytesOut + bytesOut
-                )
-                stats[name] = existing
-            } else {
-                stats[name] = InterfaceStats(name: name, bytesIn: bytesIn, bytesOut: bytesOut)
-            }
+    nonisolated static func interfaceStats(
+        from rows: [(name: String, bytesIn: UInt64, bytesOut: UInt64)]
+    ) -> [InterfaceStats] {
+        var stats: [String: InterfaceStats] = [:]
+        for row in rows where !row.name.hasPrefix("lo") {
+            stats[row.name] = InterfaceStats(name: row.name, bytesIn: row.bytesIn, bytesOut: row.bytesOut)
+        }
+        return Array(stats.values)
+    }
 
-            _ = packetsIn
-            _ = packetsOut
+    nonisolated static func interfaceRates(
+        current: [InterfaceStats],
+        previous: [String: InterfaceStats],
+        elapsed: TimeInterval
+    ) -> (bytesIn: UInt64, bytesOut: UInt64) {
+        guard elapsed > 0 else { return (0, 0) }
+
+        var totalIn: UInt64 = 0
+        var totalOut: UInt64 = 0
+
+        for stat in current where !stat.name.hasPrefix("lo") {
+            guard let previous = previous[stat.name] else { continue }
+
+            let deltaIn = stat.bytesIn >= previous.bytesIn ? stat.bytesIn - previous.bytesIn : stat.bytesIn
+            let deltaOut = stat.bytesOut >= previous.bytesOut ? stat.bytesOut - previous.bytesOut : stat.bytesOut
+            totalIn += Self.rate(deltaBytes: deltaIn, elapsed: elapsed)
+            totalOut += Self.rate(deltaBytes: deltaOut, elapsed: elapsed)
         }
 
-        return Array(stats.values)
+        return (totalIn, totalOut)
     }
 
     func parseNettopOutput(_ output: String) -> [String: (bytesIn: UInt64, bytesOut: UInt64, pid: Int32)] {

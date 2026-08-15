@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import IOKit
 
 @_silgen_name("proc_pid_rusage")
 private func proc_pid_rusage(_ pid: Int32, _ flavor: Int32, _ buffer: UnsafeMutablePointer<rusage_info_v4>) -> Int32
@@ -14,7 +15,7 @@ actor DiskMonitor {
     private let processSampleInterval: TimeInterval = 3
 
     func sampleRates() async -> (read: UInt64, write: UInt64) {
-        let current = await readCumulativeBytes()
+        let current = readCumulativeBytes()
         let now = Date()
 
         defer {
@@ -99,23 +100,55 @@ actor DiskMonitor {
         return cachedProcesses
     }
 
-    private func readCumulativeBytes() async -> (read: UInt64, write: UInt64) {
-        guard let output = try? await ProcessRunner.run(
-            executable: "/usr/sbin/ioreg",
-            arguments: ["-r", "-c", "IOBlockStorageDriver", "-d", "1"]
-        ) else {
+    private func readCumulativeBytes() -> (read: UInt64, write: UInt64) {
+        let matching = IOServiceMatching("IOBlockStorageDriver")
+        var iterator: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, matching, &iterator) == KERN_SUCCESS else {
             return (0, 0)
         }
+        defer { IOObjectRelease(iterator) }
 
         var totalRead: UInt64 = 0
         var totalWrite: UInt64 = 0
-
-        for line in output.components(separatedBy: "\n") where line.contains("Statistics") {
-            totalRead += parseStatisticValue(in: line, key: "Bytes (Read)")
-            totalWrite += parseStatisticValue(in: line, key: "Bytes (Write)")
+        var service = IOIteratorNext(iterator)
+        while service != 0 {
+            defer {
+                IOObjectRelease(service)
+                service = IOIteratorNext(iterator)
+            }
+            guard let statistics = ioRegistryDictionary(service, key: "Statistics") else { continue }
+            let bytes = Self.cumulativeBytes(from: statistics)
+            totalRead += bytes.read
+            totalWrite += bytes.write
         }
-
         return (totalRead, totalWrite)
+    }
+
+    nonisolated static func cumulativeBytes(from statistics: [String: Any]) -> (read: UInt64, write: UInt64) {
+        (uint64(statistics["Bytes (Read)"]), uint64(statistics["Bytes (Write)"]))
+    }
+
+    private nonisolated static func uint64(_ value: Any?) -> UInt64 {
+        switch value {
+        case let number as NSNumber:
+            return number.uint64Value
+        case let number as UInt64:
+            return number
+        default:
+            return 0
+        }
+    }
+
+    private func ioRegistryDictionary(_ service: io_registry_entry_t, key: String) -> [String: Any]? {
+        guard let value = IORegistryEntryCreateCFProperty(
+            service,
+            key as CFString,
+            kCFAllocatorDefault,
+            0
+        )?.takeRetainedValue() else {
+            return nil
+        }
+        return value as? [String: Any]
     }
 
     func parseStatisticValue(in line: String, key: String) -> UInt64 {

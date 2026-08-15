@@ -5,20 +5,31 @@ import Testing
 
 @Suite("Monitor parsing")
 struct MonitorParsingTests {
-    @Test("Parses netstat interface rows")
-    func netstatParsing() async {
-        let monitor = NetworkMonitor()
-        let output = """
-        Name       Mtu   Network       Address            Ipkts Ierrs    Ibytes    Opkts Oerrs     Obytes  Coll
-        lo0        16384 <Link#1>      0:0:0:0:0:0:0:0        0     0         0        0     0          0     0
-        en0        1500  <Link#11>     0:0:0:0:0:0:0:0     1000     0   1000000      500     0     500000     0
-        """
+    @Test("getifaddrs mapper drops loopback and matches sampleRates math")
+    func interfaceRatesFromSnapshots() {
+        let previousRows: [(name: String, bytesIn: UInt64, bytesOut: UInt64)] = [
+            ("lo0", 1_000, 1_000),
+            ("en0", 1_000_000, 500_000),
+        ]
+        let currentRows: [(name: String, bytesIn: UInt64, bytesOut: UInt64)] = [
+            ("lo0", 9_000, 8_000),
+            ("en0", 1_003_000, 506_000),
+        ]
 
-        let stats = await monitor.parseNetstatOutput(output)
-        let en0 = stats.first { $0.name == "en0" }
+        let previousStats = NetworkMonitor.interfaceStats(from: previousRows)
+        let currentStats = NetworkMonitor.interfaceStats(from: currentRows)
 
-        #expect(en0?.bytesIn == 1_000_000)
-        #expect(en0?.bytesOut == 500_000)
+        #expect(previousStats.contains { $0.name.hasPrefix("lo") } == false)
+        #expect(currentStats.contains { $0.name.hasPrefix("lo") } == false)
+
+        let en0 = currentStats.first { $0.name == "en0" }
+        #expect(en0?.bytesIn == 1_003_000)
+        #expect(en0?.bytesOut == 506_000)
+
+        let previous = Dictionary(uniqueKeysWithValues: previousStats.map { ($0.name, $0) })
+        let rates = NetworkMonitor.interfaceRates(current: currentStats, previous: previous, elapsed: 3)
+        #expect(rates.bytesIn == 1_000)
+        #expect(rates.bytesOut == 2_000)
     }
 
     @Test("Parses nettop process rows")
@@ -51,6 +62,17 @@ struct MonitorParsingTests {
         #expect(ByteFormatter.formatMenuBarMbps(bytesPerSecond: 125_000) == "1.0")
         #expect(ByteFormatter.formatMenuBarMbps(bytesPerSecond: 1_250_000) == "10")
         #expect(ByteFormatter.formatMenuBarMbps(bytesPerSecond: 12_500_000) == "100")
+    }
+
+    @Test("Disk statistics dictionary totals match Bytes (Read) and Bytes (Write)")
+    func diskStatisticsDictionary() {
+        let statistics: [String: Any] = [
+            "Bytes (Read)": 472_490_442_752 as UInt64,
+            "Bytes (Write)": 191_732_469_760 as UInt64,
+        ]
+        let totals = DiskMonitor.cumulativeBytes(from: statistics)
+        #expect(totals.read == 472_490_442_752)
+        #expect(totals.write == 191_732_469_760)
     }
 
     @Test("Parses ioreg statistics dictionary lines")
