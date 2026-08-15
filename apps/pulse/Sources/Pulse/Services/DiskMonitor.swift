@@ -10,9 +10,6 @@ actor DiskMonitor {
     private var previousTimestamp: Date?
     private var previousProcessStats: [Int32: (read: UInt64, write: UInt64)] = [:]
     private var cachedProcesses: [ProcessActivity] = []
-    private var lastProcessSampleTime: Date?
-    private var processSampleInFlight = false
-    private let processSampleInterval: TimeInterval = 3
 
     func sampleRates() async -> (read: UInt64, write: UInt64) {
         let current = readCumulativeBytes()
@@ -39,60 +36,41 @@ actor DiskMonitor {
         )
     }
 
-    func sampleProcesses(limit: Int = 5) async -> [ProcessActivity] {
-        let now = Date()
-        if let lastSample = lastProcessSampleTime,
-           now.timeIntervalSince(lastSample) < processSampleInterval {
-            return cachedProcesses
-        }
-        if processSampleInFlight {
-            return cachedProcesses
-        }
+    func replacePreviousProcessStats(_ stats: [Int32: (read: UInt64, write: UInt64)]) {
+        previousProcessStats = stats
+    }
 
-        processSampleInFlight = true
-        defer {
-            processSampleInFlight = false
-            lastProcessSampleTime = Date()
-        }
+    func previousProcessStatPIDs() -> Set<Int32> {
+        Set(previousProcessStats.keys)
+    }
 
-        guard let output = try? await ProcessRunner.run(
-            executable: "/bin/ps",
-            arguments: ["-Aceo", "pid,comm"]
-        ) else {
-            return cachedProcesses
-        }
-
-        let elapsed = lastProcessSampleTime.map { max(now.timeIntervalSince($0), 0.001) } ?? 1.0
-
+    func sampleProcesses(from table: [ProcessTableRow], elapsed: TimeInterval, limit: Int = 5) -> [ProcessActivity] {
+        let currentPIDs = Set(table.map(\.pid))
+        let safeElapsed = max(elapsed, 0.001)
         var activities: [ProcessActivity] = []
 
-        for line in output.components(separatedBy: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.isEmpty || trimmed.hasPrefix("PID") { continue }
-
-            let parts = trimmed.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
-            guard parts.count == 2, let pid = Int32(parts[0]) else { continue }
-
-            let name = (String(parts[1]) as NSString).lastPathComponent
-            guard let current = readProcessIO(pid: pid) else { continue }
-
-            guard let previous = previousProcessStats[pid] else {
-                previousProcessStats[pid] = current
+        for row in table {
+            guard let current = readProcessIO(pid: row.pid) else { continue }
+            guard let previous = previousProcessStats[row.pid] else {
+                previousProcessStats[row.pid] = current
                 continue
             }
 
             let readDelta = current.read >= previous.read ? current.read - previous.read : current.read
             let writeDelta = current.write >= previous.write ? current.write - previous.write : current.write
-            previousProcessStats[pid] = current
+            previousProcessStats[row.pid] = current
 
-            let readRate = UInt64(Double(readDelta) / elapsed)
-            let writeRate = UInt64(Double(writeDelta) / elapsed)
+            let readRate = UInt64(Double(readDelta) / safeElapsed)
+            let writeRate = UInt64(Double(writeDelta) / safeElapsed)
 
             if readRate > 0 || writeRate > 0 {
-                activities.append(ProcessActivity(id: pid, name: name, readRate: readRate, writeRate: writeRate))
+                activities.append(
+                    ProcessActivity(id: row.pid, name: row.name, readRate: readRate, writeRate: writeRate)
+                )
             }
         }
 
+        previousProcessStats = previousProcessStats.filter { currentPIDs.contains($0.key) }
         cachedProcesses = activities
             .sorted { $0.totalRate > $1.totalRate }
             .prefix(limit)

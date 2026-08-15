@@ -2,11 +2,6 @@ import Darwin
 import Foundation
 
 actor MemoryMonitor {
-    private var cachedProcesses: [MemoryProcessActivity] = []
-    private var lastProcessSampleTime: Date?
-    private var processSampleInFlight = false
-    private let processSampleInterval: TimeInterval = 3
-
     func sample() -> MemorySnapshot {
         var total: UInt64 = 0
         var size = MemoryLayout<UInt64>.size
@@ -102,56 +97,5 @@ actor MemoryMonitor {
         }
 
         return true
-    }
-
-    func sampleTopMemoryProcesses(limit: Int = 5) async -> [MemoryProcessActivity] {
-        let now = Date()
-        if let lastSample = lastProcessSampleTime,
-           now.timeIntervalSince(lastSample) < processSampleInterval {
-            return cachedProcesses
-        }
-        if processSampleInFlight {
-            return cachedProcesses
-        }
-
-        processSampleInFlight = true
-        defer {
-            processSampleInFlight = false
-            lastProcessSampleTime = Date()
-        }
-
-        guard let output = try? await ProcessRunner.run(
-            executable: "/bin/ps",
-            arguments: ["-ax", "-o", "pid,rss,comm"]
-        ) else {
-            return cachedProcesses
-        }
-
-        var processes: [MemoryProcessActivity] = []
-
-        for line in output.components(separatedBy: "\n").dropFirst() {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.isEmpty { continue }
-
-            let parts = trimmed.split(separator: " ", omittingEmptySubsequences: true)
-            guard parts.count >= 3,
-                  let pid = Int32(parts[0]),
-                  let rssKB = UInt64(parts[1]) else {
-                continue
-            }
-
-            let name = (String(parts[2]) as NSString).lastPathComponent
-            let bytes = rssKB * 1024
-
-            if bytes > 0 {
-                processes.append(MemoryProcessActivity(id: pid, name: name, memoryBytes: bytes))
-            }
-        }
-
-        cachedProcesses = processes
-            .sorted { $0.memoryBytes > $1.memoryBytes }
-            .prefix(limit)
-            .map { $0 }
-        return cachedProcesses
     }
 }

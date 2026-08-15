@@ -179,6 +179,70 @@ struct MonitorParsingTests {
         #expect(withSpeculative.free == 10 * gib)
     }
 
+    @Test("Shared process table ranks CPU by pcpu and memory by rss")
+    func sharedProcessTableRanking() {
+        let output = """
+          PID  %CPU    RSS COMM
+          452  44.0   1024 WindowServer
+          765  23.2    512 Terminal
+          100   0.0      8 idle
+          999   5.0   8192 Safari
+           50   1.0   4096 Mail
+        """
+        let rows = ProcessTable.parse(output)
+        let cpu = ProcessTable.topCPU(rows, limit: 3)
+        let memory = ProcessTable.topMemory(rows, limit: 3)
+
+        #expect(cpu.map(\.id) == [452, 765, 999])
+        #expect(cpu[0].name == "WindowServer")
+        #expect(cpu[0].usage == 0.44)
+        #expect(abs(cpu[1].usage - 0.232) < 0.0001)
+        #expect(memory.map(\.id) == [999, 50, 452])
+        #expect(memory[0].memoryBytes == 8192 * 1024)
+        #expect(memory[1].name == "Mail")
+    }
+
+    @Test("Disk prune drops previous stats for PIDs missing from the current table")
+    func diskPruneMissingPIDs() async {
+        let monitor = DiskMonitor()
+        await monitor.replacePreviousProcessStats([
+            1: (read: 100, write: 10),
+            2: (read: 200, write: 20),
+        ])
+        let table = [ProcessTableRow(pid: 2, cpuPercent: 1, rssKB: 8, name: "keep")]
+        _ = await monitor.sampleProcesses(from: table, elapsed: 1)
+        #expect(await monitor.previousProcessStatPIDs() == [2])
+    }
+
+    @Test("collectDetails(includeProcesses: false) does not sample the process table")
+    func collectDetailsSkipsProcessTableWhenClosed() async {
+        let now = Date(timeIntervalSince1970: 1_000)
+        #expect(
+            MonitorCollector.shouldSampleProcessTable(
+                includeProcesses: false, now: now, last: nil, interval: 3
+            ) == false
+        )
+        #expect(
+            MonitorCollector.shouldSampleProcessTable(
+                includeProcesses: true, now: now, last: nil, interval: 3
+            ) == true
+        )
+        #expect(
+            MonitorCollector.shouldSampleProcessTable(
+                includeProcesses: true, now: now, last: now.addingTimeInterval(-0.1), interval: 3
+            ) == false
+        )
+        #expect(
+            MonitorCollector.shouldSampleProcessTable(
+                includeProcesses: true, now: now, last: now.addingTimeInterval(-4), interval: 3
+            ) == true
+        )
+
+        let collector = MonitorCollector()
+        _ = await collector.collectDetails(includeProcesses: false)
+        #expect(await collector.processTableSampleCount == 0)
+    }
+
     @Test("Thermal monitor samples without crashing on Apple Silicon")
     func thermalSampling() async {
         let monitor = ThermalMonitor()

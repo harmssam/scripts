@@ -311,7 +311,8 @@ final class AppState: ObservableObject {
 
                 if await collector.beginDetailsIfIdle() {
                     Task {
-                        let details = await collector.collectDetails()
+                        let includeProcesses = await MainActor.run { self.isPopoverShown }
+                        let details = await collector.collectDetails(includeProcesses: includeProcesses)
                         await MainActor.run {
                             self.applyDetails(rates, details)
                         }

@@ -25,21 +25,4 @@ struct CPUMonitorTests {
         #expect(!sample.isValid)
     }
 
-    @Test("Parses ps output for top processes")
-    func processParsing() async {
-        let monitor = CPUMonitor()
-        let output = """
-          PID  %CPU COMM
-          452  44.0 WindowServer
-          765  23.2 Terminal
-          100   0.0 idle
-        """
-
-        let processes = await monitor.parseProcessOutput(output, limit: 5)
-
-        #expect(processes.count == 2)
-        #expect(processes[0].name == "WindowServer")
-        #expect(processes[0].usage == 0.44)
-        #expect(processes[1].name == "Terminal")
-    }
 }
