@@ -28,6 +28,17 @@ actor MonitorCollector {
     let gpuMonitor = GPUMonitor()
     let thermalMonitor = ThermalMonitor()
     let memoryMonitor = MemoryMonitor()
+    private var detailsInFlight = false
+
+    func beginDetailsIfIdle() -> Bool {
+        guard !detailsInFlight else { return false }
+        detailsInFlight = true
+        return true
+    }
+
+    func endDetails() {
+        detailsInFlight = false
+    }
 
     func collectRates() async -> RefreshRates {
         async let networkRates = networkMonitor.sampleRates()

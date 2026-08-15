@@ -13,6 +13,7 @@ actor NetworkMonitor {
     private var previousProcessBytes: [String: (bytesIn: UInt64, bytesOut: UInt64, pid: Int32)] = [:]
     private var cachedProcesses: [NetworkProcessActivity] = []
     private var lastProcessSampleTime: Date?
+    private var lastProcessAttemptTime: Date?
     private var processSampleInFlight = false
     private let processSampleInterval: TimeInterval = 3
     /// nettop -L 1 routinely takes ~5s on busy systems; keep margin above that.
@@ -38,20 +39,26 @@ actor NetworkMonitor {
         )
     }
 
-    func sampleProcesses(limit: Int = 5) async -> [NetworkProcessActivity] {
+    func sampleProcesses(limit: Int = 5) -> [NetworkProcessActivity] {
         let now = Date()
-        if let lastSample = lastProcessSampleTime,
-           now.timeIntervalSince(lastSample) < processSampleInterval {
-            return cachedProcesses
-        }
-        if processSampleInFlight {
+        guard Self.shouldRefreshProcesses(
+            now: now,
+            last: lastProcessAttemptTime,
+            interval: processSampleInterval,
+            inFlight: processSampleInFlight
+        ) else {
             return cachedProcesses
         }
 
         processSampleInFlight = true
-        defer {
-            processSampleInFlight = false
+        Task.detached { [self] in
+            await self.refreshProcessSample(limit: limit)
         }
+        return cachedProcesses
+    }
+
+    private func refreshProcessSample(limit: Int) async {
+        defer { processSampleInFlight = false }
 
         CrashReporter.breadcrumb("NetworkMonitor.sampleProcesses: nettop start")
         let output: String
@@ -68,12 +75,14 @@ actor NetworkMonitor {
         } catch {
             AppLogger.debug("nettop failed: \(error)", category: AppLogger.monitor)
             CrashReporter.breadcrumb("NetworkMonitor.sampleProcesses: nettop failed")
+            let failedAt = Date()
+            lastProcessAttemptTime = failedAt
             lastProcessSampleTime = Self.nextRateTimestamp(
                 previous: lastProcessSampleTime,
                 sampleSucceeded: false,
-                now: Date()
+                now: failedAt
             )
-            return cachedProcesses
+            return
         }
         CrashReporter.breadcrumb("NetworkMonitor.sampleProcesses: nettop done")
 
@@ -107,12 +116,12 @@ actor NetworkMonitor {
             sampleSucceeded: true,
             now: sampleTime
         )
+        lastProcessAttemptTime = sampleTime
 
         cachedProcesses = activities
             .sorted { $0.totalRate > $1.totalRate }
             .prefix(limit)
             .map { $0 }
-        return cachedProcesses
     }
 
     private func readInterfaceStats() -> [InterfaceStats] {
@@ -215,5 +224,16 @@ actor NetworkMonitor {
         now: Date
     ) -> Date? {
         sampleSucceeded ? now : previous
+    }
+
+    nonisolated static func shouldRefreshProcesses(
+        now: Date,
+        last: Date?,
+        interval: TimeInterval,
+        inFlight: Bool
+    ) -> Bool {
+        if inFlight { return false }
+        if let last, now.timeIntervalSince(last) < interval { return false }
+        return true
     }
 }

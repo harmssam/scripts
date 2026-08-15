@@ -303,17 +303,23 @@ final class AppState: ObservableObject {
                 guard let self else { return }
                 CrashReporter.breadcrumb("AppState.refresh start")
 
+                let deadline = ContinuousClock.now + .seconds(interval)
                 let rates = await collector.collectRates()
                 await MainActor.run {
                     self.applyRates(rates)
                 }
 
-                let details = await collector.collectDetails()
-                await MainActor.run {
-                    self.applyDetails(rates, details)
+                if await collector.beginDetailsIfIdle() {
+                    Task {
+                        let details = await collector.collectDetails()
+                        await MainActor.run {
+                            self.applyDetails(rates, details)
+                        }
+                        await collector.endDetails()
+                    }
                 }
 
-                try? await Task.sleep(for: .seconds(interval))
+                try? await Task.sleep(until: deadline, clock: .continuous)
             }
         }
 

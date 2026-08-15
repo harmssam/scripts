@@ -113,6 +113,50 @@ struct MonitorParsingTests {
         )
     }
 
+    @Test("shouldRefreshProcesses gates interval and in-flight")
+    func processRefreshPredicate() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let recent = now.addingTimeInterval(-0.1)
+        let stale = now.addingTimeInterval(-4)
+        #expect(
+            NetworkMonitor.shouldRefreshProcesses(
+                now: now, last: recent, interval: 3, inFlight: false
+            ) == false
+        )
+        #expect(
+            NetworkMonitor.shouldRefreshProcesses(
+                now: now, last: stale, interval: 3, inFlight: false
+            ) == true
+        )
+        #expect(
+            NetworkMonitor.shouldRefreshProcesses(
+                now: now, last: stale, interval: 3, inFlight: true
+            ) == false
+        )
+        #expect(
+            NetworkMonitor.shouldRefreshProcesses(
+                now: now, last: nil, interval: 3, inFlight: false
+            ) == true
+        )
+        #expect(
+            NetworkMonitor.shouldRefreshProcesses(
+                now: now, last: nil, interval: 3, inFlight: true
+            ) == false
+        )
+    }
+
+    @Test("sampleProcesses returns without waiting for nettop")
+    func sampleProcessesReturnsCachedImmediately() async {
+        let monitor = NetworkMonitor()
+        let start = ContinuousClock.now
+        _ = await monitor.sampleProcesses()
+        #expect(start.duration(to: ContinuousClock.now) < .seconds(0.5))
+
+        let secondStart = ContinuousClock.now
+        _ = await monitor.sampleProcesses()
+        #expect(secondStart.duration(to: ContinuousClock.now) < .milliseconds(100))
+    }
+
     @Test("Memory used is active+wired+compressed; free includes inactive")
     func memoryBucketsFromPageCounts() {
         // Units: `total` is bytes. active/wired/compressed/freePages/inactive/speculative

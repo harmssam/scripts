@@ -20,6 +20,18 @@ struct RefreshStressTests {
         }
     }
 
+    @Test("collectRates returns while collectDetails is in flight")
+    func collectRatesDuringDetails() async {
+        let collector = MonitorCollector()
+        async let details = collector.collectDetails()
+        try? await Task.sleep(for: .milliseconds(20))
+        let start = ContinuousClock.now
+        let rates = await collector.collectRates()
+        #expect(rates.downloadRate >= 0)
+        #expect(start.duration(to: ContinuousClock.now) < .seconds(1))
+        _ = await details
+    }
+
     @Test("ProcessRunner handles concurrent subprocess spawns")
     func concurrentProcessRunner() async throws {
         try await withThrowingTaskGroup(of: String.self) { group in
