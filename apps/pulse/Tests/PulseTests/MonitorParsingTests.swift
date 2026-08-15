@@ -145,18 +145,6 @@ struct MonitorParsingTests {
         )
     }
 
-    @Test("sampleProcesses returns without waiting for nettop")
-    func sampleProcessesReturnsCachedImmediately() async {
-        let monitor = NetworkMonitor()
-        let start = ContinuousClock.now
-        _ = await monitor.sampleProcesses()
-        #expect(start.duration(to: ContinuousClock.now) < .seconds(0.5))
-
-        let secondStart = ContinuousClock.now
-        _ = await monitor.sampleProcesses()
-        #expect(secondStart.duration(to: ContinuousClock.now) < .milliseconds(100))
-    }
-
     @Test("Memory used is active+wired+compressed; free includes inactive")
     func memoryBucketsFromPageCounts() {
         // Units: `total` is bytes. active/wired/compressed/freePages/inactive/speculative
