@@ -1,3 +1,4 @@
+import Darwin
 import Testing
 @testable import Pulse
 
@@ -63,6 +64,47 @@ struct MonitorParsingTests {
 
         #expect(read == 472_490_442_752)
         #expect(write == 191_732_469_760)
+    }
+
+    @Test("Network process rate divides delta by elapsed seconds")
+    func networkProcessRate() {
+        #expect(NetworkMonitor.rate(deltaBytes: 3000, elapsed: 3) == 1000)
+        #expect(NetworkMonitor.rate(deltaBytes: 1000, elapsed: 0) == 0)
+        #expect(NetworkMonitor.rate(deltaBytes: 1000, elapsed: -1) == 0)
+    }
+
+    @Test("Memory used is active+wired+compressed; free includes inactive")
+    func memoryBucketsFromPageCounts() {
+        // Units: `total` is bytes. active/wired/compressed/freePages/inactive/speculative
+        // are page counts; `from` multiplies them by getpagesize().
+        let pageSize = UInt64(getpagesize())
+        let gib: UInt64 = 1 << 30
+        func pages(_ gibCount: UInt64) -> UInt64 { gibCount * gib / pageSize }
+
+        let snapshot = MemorySnapshot.from(
+            total: 16 * gib,
+            active: pages(4),
+            wired: pages(2),
+            compressed: pages(1),
+            freePages: pages(1),
+            inactive: pages(8),
+            speculative: 0
+        )
+        #expect(snapshot.used == 7 * gib)
+        #expect(snapshot.free == 9 * gib)
+        #expect(snapshot.isValid)
+
+        let withSpeculative = MemorySnapshot.from(
+            total: 16 * gib,
+            active: pages(4),
+            wired: pages(2),
+            compressed: pages(1),
+            freePages: pages(1),
+            inactive: pages(8),
+            speculative: pages(1)
+        )
+        #expect(withSpeculative.used == 7 * gib)
+        #expect(withSpeculative.free == 10 * gib)
     }
 
     @Test("Thermal monitor samples without crashing on Apple Silicon")

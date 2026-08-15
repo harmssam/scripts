@@ -27,26 +27,14 @@ actor MemoryMonitor {
             return .unavailable
         }
 
-        let pageSize = UInt64(getpagesize())
-
-        let free = UInt64(vmStats.free_count) * pageSize
-        let active = UInt64(vmStats.active_count) * pageSize
-        let _ = UInt64(vmStats.inactive_count) * pageSize
-        let wired = UInt64(vmStats.wire_count) * pageSize
-        let compressed = UInt64(vmStats.compressor_page_count) * pageSize
-
-        // Used is generally everything except truly free.
-        // For display, common is total - free (free includes inactive that can be purged)
-        let used = total - free
-
-        return MemorySnapshot(
+        return MemorySnapshot.from(
             total: total,
-            free: free,
-            used: used,
-            active: active,
-            wired: wired,
-            compressed: compressed,
-            isValid: true
+            active: UInt64(vmStats.active_count),
+            wired: UInt64(vmStats.wire_count),
+            compressed: UInt64(vmStats.compressor_page_count),
+            freePages: UInt64(vmStats.free_count),
+            inactive: UInt64(vmStats.inactive_count),
+            speculative: UInt64(vmStats.speculative_count)
         )
     }
 

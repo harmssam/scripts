@@ -41,8 +41,8 @@ actor NetworkMonitor {
 
             let deltaIn = stat.bytesIn >= previous.bytesIn ? stat.bytesIn - previous.bytesIn : stat.bytesIn
             let deltaOut = stat.bytesOut >= previous.bytesOut ? stat.bytesOut - previous.bytesOut : stat.bytesOut
-            totalIn += UInt64(Double(deltaIn) / elapsed)
-            totalOut += UInt64(Double(deltaOut) / elapsed)
+            totalIn += Self.rate(deltaBytes: deltaIn, elapsed: elapsed)
+            totalOut += Self.rate(deltaBytes: deltaOut, elapsed: elapsed)
         }
 
         return (totalIn, totalOut)
@@ -84,6 +84,8 @@ actor NetworkMonitor {
         CrashReporter.breadcrumb("NetworkMonitor.sampleProcesses: nettop done")
 
         let current = parseNettopOutput(output)
+        let sampleTime = Date()
+        let elapsed = lastProcessSampleTime.map { sampleTime.timeIntervalSince($0) } ?? 0
         var activities: [NetworkProcessActivity] = []
 
         for (name, bytes) in current {
@@ -92,8 +94,8 @@ actor NetworkMonitor {
             let downloadDelta = bytes.bytesIn >= previous.bytesIn ? bytes.bytesIn - previous.bytesIn : bytes.bytesIn
             let uploadDelta = bytes.bytesOut >= previous.bytesOut ? bytes.bytesOut - previous.bytesOut : bytes.bytesOut
 
-            let downloadRate = UInt64(Double(downloadDelta))
-            let uploadRate = UInt64(Double(uploadDelta))
+            let downloadRate = Self.rate(deltaBytes: downloadDelta, elapsed: elapsed)
+            let uploadRate = Self.rate(deltaBytes: uploadDelta, elapsed: elapsed)
 
             if downloadRate > 0 || uploadRate > 0 {
                 activities.append(NetworkProcessActivity(
@@ -191,5 +193,10 @@ actor NetworkMonitor {
         }
 
         return result
+    }
+
+    nonisolated static func rate(deltaBytes: UInt64, elapsed: TimeInterval) -> UInt64 {
+        guard elapsed > 0 else { return 0 }
+        return UInt64(Double(deltaBytes) / elapsed)
     }
 }

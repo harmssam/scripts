@@ -426,26 +426,15 @@ final class AppState: ObservableObject {
         let currentAppURL = Bundle.main.bundleURL
         AppLogger.debug("Preparing to replace app at \(currentAppURL.path) with \(newAppURL.path)", category: AppLogger.update)
 
-        // Safer approach: launch the new app first, then quit and let a background process clean up
-        // This reduces the chance of the running bundle being deleted while still executing code.
-        let script = """
-        (sleep 1; \
-        open -na "\(newAppURL.path)" --args \(InstallLocationChecker.updatingLaunchArgument); \
-        sleep 2; \
-        rm -rf "\(currentAppURL.path)"; \
-        mv "\(newAppURL.path)" "\(currentAppURL.path)"
-        ) &
-        """
-
-        AppLogger.debug("Spawning cleanup script...", category: AppLogger.update)
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/bash")
-        task.arguments = ["-c", script]
-        try? task.run()
-
-        AppLogger.info("Terminating current instance for update", category: AppLogger.update)
-        // Quit this instance
-        NSApp.terminate(nil)
+        switch UpdateInstaller.install(from: newAppURL, to: currentAppURL) {
+        case .success:
+            AppLogger.info("Terminating current instance for update", category: AppLogger.update)
+            NSApp.terminate(nil)
+        case .failure(let error):
+            AppLogger.error("Update install failed: \(error)", category: AppLogger.update)
+            updateStatus = "Update failed"
+            updateFailed = true
+        }
     }
 
     func toggleFanBoost() async {

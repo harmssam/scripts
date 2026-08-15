@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 struct MemorySnapshot: Sendable {
@@ -23,4 +24,26 @@ struct MemorySnapshot: Sendable {
         compressed: 0,
         isValid: false
     )
+
+    /// `total` is bytes (`hw.memsize`). Other arguments are Mach page counts.
+    static func from(
+        total: UInt64,
+        active: UInt64,
+        wired: UInt64,
+        compressed: UInt64,
+        freePages: UInt64,
+        inactive: UInt64,
+        speculative: UInt64
+    ) -> MemorySnapshot {
+        let pageSize = UInt64(getpagesize())
+        return MemorySnapshot(
+            total: total,
+            free: (freePages + inactive + speculative) * pageSize,
+            used: (active + wired + compressed) * pageSize,
+            active: active * pageSize,
+            wired: wired * pageSize,
+            compressed: compressed * pageSize,
+            isValid: true
+        )
+    }
 }

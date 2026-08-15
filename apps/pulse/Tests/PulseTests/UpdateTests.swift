@@ -83,3 +83,48 @@ struct UpdateDownloaderTests {
         }
     }
 }
+
+@Suite("Update installer")
+struct UpdateInstallerTests {
+    @Test("Replace and launch plans use argv arrays without a shell")
+    func plansHaveNoShell() {
+        let from = URL(fileURLWithPath: "/tmp/New \"Pulse\".app")
+        let to = URL(fileURLWithPath: "/Applications/Pulse Beta.app")
+
+        let replace = UpdateInstaller.replacePlan(from: from, to: to)
+        #expect(replace.executable == "/usr/bin/ditto")
+        #expect(!replace.executable.contains("bash"))
+        #expect(!replace.arguments.contains("-c"))
+        #expect(!replace.arguments.contains("bash"))
+        #expect(replace.arguments == [from.path, to.path])
+        #expect(replace.arguments[0].contains("\""))
+        #expect(replace.arguments[1].contains(" "))
+
+        let launch = UpdateInstaller.launchPlan(installedPath: to.path)
+        #expect(launch.executable == "/usr/bin/open")
+        #expect(!launch.executable.contains("bash"))
+        #expect(!launch.arguments.contains("-c"))
+        #expect(!launch.arguments.contains("bash"))
+        #expect(launch.arguments == [
+            "-n",
+            to.path,
+            "--args",
+            InstallLocationChecker.updatingLaunchArgument
+        ])
+        #expect(launch.arguments[1].contains(" "))
+    }
+
+    @Test("Failed replace returns an error and does not succeed")
+    func failedReplaceReturnsError() {
+        let missing = URL(fileURLWithPath: "/tmp/Pulse-missing-\(UUID().uuidString).app")
+        let dest = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Pulse-install-dest-\(UUID().uuidString).app")
+        let result = UpdateInstaller.install(from: missing, to: dest)
+        switch result {
+        case .success:
+            Issue.record("expected replace failure")
+        case .failure:
+            break
+        }
+    }
+}
