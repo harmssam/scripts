@@ -396,9 +396,8 @@ final class AppState: ObservableObject {
                 await MainActor.run {
                     self.updateStatus = "Installing..."
                     self.isDownloadingUpdate = false
-                    self.availableUpdate = nil
-                    self.performUpdateInstall(newAppURL: newAppURL)
                 }
+                await self.performUpdateInstall(newAppURL: newAppURL)
             } catch is CancellationError {
                 AppLogger.debug("Update cancelled", category: AppLogger.update)
                 await MainActor.run {
@@ -422,11 +421,23 @@ final class AppState: ObservableObject {
         startUpdate()
     }
 
-    private func performUpdateInstall(newAppURL: URL) {
+    nonisolated static func nextAvailableUpdate(current: AppUpdate?, installSucceeded: Bool) -> AppUpdate? {
+        installSucceeded ? nil : current
+    }
+
+    private func performUpdateInstall(newAppURL: URL) async {
         let currentAppURL = Bundle.main.bundleURL
         AppLogger.debug("Preparing to replace app at \(currentAppURL.path) with \(newAppURL.path)", category: AppLogger.update)
 
-        switch UpdateInstaller.install(from: newAppURL, to: currentAppURL) {
+        let result = await Task.detached {
+            UpdateInstaller.install(from: newAppURL, to: currentAppURL)
+        }.value
+
+        let succeeded: Bool
+        if case .success = result { succeeded = true } else { succeeded = false }
+        availableUpdate = Self.nextAvailableUpdate(current: availableUpdate, installSucceeded: succeeded)
+
+        switch result {
         case .success:
             AppLogger.info("Terminating current instance for update", category: AppLogger.update)
             NSApp.terminate(nil)

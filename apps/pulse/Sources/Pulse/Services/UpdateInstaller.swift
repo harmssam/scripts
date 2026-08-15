@@ -7,17 +7,9 @@ struct UpdateInstallPlan: Sendable {
 
 enum UpdateInstaller {
     enum InstallError: Error, Sendable {
-        case replaceFailedToStart
-        case replaceFailed(Int32)
+        case replaceFailed
         case launchFailedToStart
         case launchFailed(Int32)
-    }
-
-    static func replacePlan(from: URL, to: URL) -> UpdateInstallPlan {
-        UpdateInstallPlan(
-            executable: "/usr/bin/ditto",
-            arguments: [from.path, to.path]
-        )
     }
 
     static func launchPlan(installedPath: String) -> UpdateInstallPlan {
@@ -27,12 +19,19 @@ enum UpdateInstaller {
         )
     }
 
+    static func replace(from: URL, to: URL) -> Result<Void, InstallError> {
+        do {
+            _ = try FileManager.default.replaceItemAt(to, withItemAt: from)
+            return .success(())
+        } catch {
+            return .failure(.replaceFailed)
+        }
+    }
+
     static func install(from: URL, to: URL) -> Result<Void, InstallError> {
-        switch run(replacePlan(from: from, to: to)) {
-        case .failure(.failedToStart):
-            return .failure(.replaceFailedToStart)
-        case .failure(.nonZero(let status)):
-            return .failure(.replaceFailed(status))
+        switch replace(from: from, to: to) {
+        case .failure(let error):
+            return .failure(error)
         case .success:
             break
         }

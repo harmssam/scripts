@@ -86,19 +86,9 @@ struct UpdateDownloaderTests {
 
 @Suite("Update installer")
 struct UpdateInstallerTests {
-    @Test("Replace and launch plans use argv arrays without a shell")
-    func plansHaveNoShell() {
-        let from = URL(fileURLWithPath: "/tmp/New \"Pulse\".app")
+    @Test("Launch plan uses argv arrays without a shell")
+    func launchPlanHasNoShell() {
         let to = URL(fileURLWithPath: "/Applications/Pulse Beta.app")
-
-        let replace = UpdateInstaller.replacePlan(from: from, to: to)
-        #expect(replace.executable == "/usr/bin/ditto")
-        #expect(!replace.executable.contains("bash"))
-        #expect(!replace.arguments.contains("-c"))
-        #expect(!replace.arguments.contains("bash"))
-        #expect(replace.arguments == [from.path, to.path])
-        #expect(replace.arguments[0].contains("\""))
-        #expect(replace.arguments[1].contains(" "))
 
         let launch = UpdateInstaller.launchPlan(installedPath: to.path)
         #expect(launch.executable == "/usr/bin/open")
@@ -112,6 +102,35 @@ struct UpdateInstallerTests {
             InstallLocationChecker.updatingLaunchArgument
         ])
         #expect(launch.arguments[1].contains(" "))
+        #expect(launch.arguments[1].contains("\"" ) == false)
+        #expect(to.path.contains(" "))
+    }
+
+    @Test("Replace drops files that are not in the new bundle")
+    func replaceDropsStaleFiles() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PulseReplace-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let dest = root.appendingPathComponent("Pulse.app")
+        let src = root.appendingPathComponent("New.app")
+        try FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: src, withIntermediateDirectories: true)
+        try Data("old".utf8).write(to: dest.appendingPathComponent("stale.bin"))
+        try Data("old-keep".utf8).write(to: dest.appendingPathComponent("keep.bin"))
+        try Data("new-keep".utf8).write(to: src.appendingPathComponent("keep.bin"))
+        try Data("fresh".utf8).write(to: src.appendingPathComponent("fresh.bin"))
+
+        let result = UpdateInstaller.replace(from: src, to: dest)
+        guard case .success = result else {
+            Issue.record("expected replace success")
+            return
+        }
+        #expect(!FileManager.default.fileExists(atPath: dest.appendingPathComponent("stale.bin").path))
+        #expect(FileManager.default.fileExists(atPath: dest.appendingPathComponent("fresh.bin").path))
+        let keep = try String(contentsOf: dest.appendingPathComponent("keep.bin"), encoding: .utf8)
+        #expect(keep == "new-keep")
     }
 
     @Test("Failed replace returns an error and does not succeed")
@@ -126,5 +145,16 @@ struct UpdateInstallerTests {
         case .failure:
             break
         }
+    }
+
+    @Test("Failed install keeps the pending update so retry can run")
+    func keepsAvailableUpdateWhenInstallFails() {
+        let update = AppUpdate(
+            version: "9.9.9",
+            downloadURL: URL(string: "https://example.com/Pulse.zip")!,
+            releaseURL: URL(string: "https://example.com/release")!
+        )
+        #expect(AppState.nextAvailableUpdate(current: update, installSucceeded: false) == update)
+        #expect(AppState.nextAvailableUpdate(current: update, installSucceeded: true) == nil)
     }
 }

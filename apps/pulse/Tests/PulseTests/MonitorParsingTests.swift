@@ -1,4 +1,5 @@
 import Darwin
+import Foundation
 import Testing
 @testable import Pulse
 
@@ -71,6 +72,23 @@ struct MonitorParsingTests {
         #expect(NetworkMonitor.rate(deltaBytes: 3000, elapsed: 3) == 1000)
         #expect(NetworkMonitor.rate(deltaBytes: 1000, elapsed: 0) == 0)
         #expect(NetworkMonitor.rate(deltaBytes: 1000, elapsed: -1) == 0)
+    }
+
+    @Test("Failed process sample does not advance the rate timestamp")
+    func failedProcessSampleKeepsRateTimestamp() {
+        let previous = Date(timeIntervalSince1970: 1_000)
+        let now = Date(timeIntervalSince1970: 1_003)
+        #expect(
+            NetworkMonitor.nextRateTimestamp(previous: previous, sampleSucceeded: false, now: now)
+                == previous
+        )
+        #expect(
+            NetworkMonitor.nextRateTimestamp(previous: nil, sampleSucceeded: false, now: now) == nil
+        )
+        #expect(
+            NetworkMonitor.nextRateTimestamp(previous: previous, sampleSucceeded: true, now: now)
+                == now
+        )
     }
 
     @Test("Memory used is active+wired+compressed; free includes inactive")

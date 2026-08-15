@@ -61,7 +61,6 @@ actor NetworkMonitor {
         processSampleInFlight = true
         defer {
             processSampleInFlight = false
-            lastProcessSampleTime = Date()
         }
 
         CrashReporter.breadcrumb("NetworkMonitor.sampleProcesses: nettop start")
@@ -79,6 +78,11 @@ actor NetworkMonitor {
         } catch {
             AppLogger.debug("nettop failed: \(error)", category: AppLogger.monitor)
             CrashReporter.breadcrumb("NetworkMonitor.sampleProcesses: nettop failed")
+            lastProcessSampleTime = Self.nextRateTimestamp(
+                previous: lastProcessSampleTime,
+                sampleSucceeded: false,
+                now: Date()
+            )
             return cachedProcesses
         }
         CrashReporter.breadcrumb("NetworkMonitor.sampleProcesses: nettop done")
@@ -108,6 +112,11 @@ actor NetworkMonitor {
         }
 
         previousProcessBytes = current
+        lastProcessSampleTime = Self.nextRateTimestamp(
+            previous: lastProcessSampleTime,
+            sampleSucceeded: true,
+            now: sampleTime
+        )
 
         cachedProcesses = activities
             .sorted { $0.totalRate > $1.totalRate }
@@ -198,5 +207,13 @@ actor NetworkMonitor {
     nonisolated static func rate(deltaBytes: UInt64, elapsed: TimeInterval) -> UInt64 {
         guard elapsed > 0 else { return 0 }
         return UInt64(Double(deltaBytes) / elapsed)
+    }
+
+    nonisolated static func nextRateTimestamp(
+        previous: Date?,
+        sampleSucceeded: Bool,
+        now: Date
+    ) -> Date? {
+        sampleSucceeded ? now : previous
     }
 }
