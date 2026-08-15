@@ -1,6 +1,6 @@
 import Foundation
 
-struct Fan: Sendable, Identifiable {
+struct Fan: Equatable, Sendable, Identifiable {
     let id: Int
     let currentRPM: Double
     let minRPM: Double?
@@ -21,7 +21,7 @@ struct Fan: Sendable, Identifiable {
     }
 }
 
-struct FanSnapshot: Sendable {
+struct FanSnapshot: Equatable, Sendable {
     let fans: [Fan]
 
     var isAvailable: Bool { !fans.isEmpty }

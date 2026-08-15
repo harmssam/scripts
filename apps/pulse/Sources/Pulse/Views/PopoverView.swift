@@ -36,6 +36,8 @@ struct PopoverView: View {
     @State private var isSettingsHovered = false
     @State private var showSettings = false
 
+    private var metrics: PopoverMetrics { appState.popoverMetrics }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -389,15 +391,15 @@ struct PopoverView: View {
                 SummaryItem(label: "Upload", value: "\(ByteFormatter.formatMbps(bytesPerSecond: appState.uploadRate)) Mbps", tint: .green)
             ],
             sparklines: [
-                SparklineSpec(values: appState.networkDownHistory, color: .blue, label: "Download"),
-                SparklineSpec(values: appState.networkUpHistory, color: .green, label: "Upload")
+                SparklineSpec(values: metrics.networkDownHistory, color: .blue, label: "Download"),
+                SparklineSpec(values: metrics.networkUpHistory, color: .green, label: "Upload")
             ],
             columns: [
                 MetricColumn(title: "Process", width: .flexible, alignment: .leading),
                 MetricColumn(title: "↓ Mbps", width: .fixed(52), alignment: .trailing),
                 MetricColumn(title: "↑ Mbps", width: .fixed(52), alignment: .trailing)
             ],
-            rows: appState.networkProcesses.map { process in
+            rows: metrics.networkProcesses.map { process in
                 [
                     process.name,
                     ByteFormatter.formatMbps(bytesPerSecond: process.downloadRate),
@@ -416,28 +418,28 @@ struct PopoverView: View {
             summary: [
                 SummaryItem(
                     label: "Total",
-                    value: appState.cpuUsage.isValid ? PercentFormatter.format(appState.cpuUsage.total) : "—",
+                    value: metrics.cpuUsage.isValid ? PercentFormatter.format(metrics.cpuUsage.total) : "—",
                     tint: .red
                 ),
                 SummaryItem(
                     label: "User",
-                    value: appState.cpuUsage.isValid ? PercentFormatter.format(appState.cpuUsage.user) : "—",
+                    value: metrics.cpuUsage.isValid ? PercentFormatter.format(metrics.cpuUsage.user) : "—",
                     tint: .red.opacity(0.8)
                 ),
                 SummaryItem(
                     label: "System",
-                    value: appState.cpuUsage.isValid ? PercentFormatter.format(appState.cpuUsage.system) : "—",
+                    value: metrics.cpuUsage.isValid ? PercentFormatter.format(metrics.cpuUsage.system) : "—",
                     tint: .red.opacity(0.6)
                 )
             ],
             sparklines: [
-                SparklineSpec(values: appState.cpuHistory, color: .red, label: "Usage")
+                SparklineSpec(values: metrics.cpuHistory, color: .red, label: "Usage")
             ],
             columns: [
                 MetricColumn(title: "Process", width: .flexible, alignment: .leading),
                 MetricColumn(title: "CPU", width: .fixed(52), alignment: .trailing)
             ],
-            rows: appState.cpuProcesses.map { process in
+            rows: metrics.cpuProcesses.map { process in
                 [process.name, PercentFormatter.formatDetailed(process.usage)]
             },
             emptyMessage: "No active CPU usage"
@@ -445,7 +447,7 @@ struct PopoverView: View {
     }
 
     private func gpuCard(grabber: AnyView) -> some View {
-        let gpu = appState.gpuSnapshot
+        let gpu = metrics.gpuSnapshot
 
         return MetricCard(
             title: "GPU",
@@ -454,13 +456,13 @@ struct PopoverView: View {
             trailingHeader: grabber,
             summary: gpuSummaryItems(for: gpu),
             sparklines: gpu.isAvailable ? [
-                SparklineSpec(values: appState.gpuHistory, color: .indigo, label: "Utilization")
+                SparklineSpec(values: metrics.gpuHistory, color: .indigo, label: "Utilization")
             ] : [],
             columns: [
                 MetricColumn(title: "Process", width: .flexible, alignment: .leading),
                 MetricColumn(title: "Memory", width: .fixed(64), alignment: .trailing)
             ],
-            rows: appState.gpuProcesses.map { process in
+            rows: metrics.gpuProcesses.map { process in
                 [
                     process.name,
                     ByteFormatter.formatBytes(process.memoryBytes)
@@ -471,7 +473,7 @@ struct PopoverView: View {
     }
 
     private func memoryCard(grabber: AnyView) -> some View {
-        let mem = appState.memorySnapshot
+        let mem = metrics.memorySnapshot
         guard mem.isValid else {
             return AnyView(
                 MetricCard(
@@ -501,7 +503,7 @@ struct PopoverView: View {
             totalDisplay = String(format: "%.1fGB", totalGB)
         }
 
-        let topMemory = Array(appState.memoryProcesses.prefix(5))
+        let topMemory = Array(metrics.memoryProcesses.prefix(5))
 
         let card = MetricCard(
             title: "Memory (\(totalDisplay))",
@@ -514,7 +516,7 @@ struct PopoverView: View {
                 SummaryItem(label: "Compr.", value: ByteFormatter.formatBytes(mem.compressed), tint: .purple)
             ],
             sparklines: [
-                SparklineSpec(values: appState.memoryUsedHistory, color: .purple, label: "Used")
+                SparklineSpec(values: metrics.memoryUsedHistory, color: .purple, label: "Used")
             ],
             columns: [
                 MetricColumn(title: "Process", width: .flexible, alignment: .leading),
@@ -550,8 +552,8 @@ struct PopoverView: View {
     }
 
     private func tempCard(grabber: AnyView) -> some View {
-        let t = appState.tempSnapshot
-        let f = appState.fanSnapshot
+        let t = metrics.tempSnapshot
+        let f = metrics.fanSnapshot
 
         let summary: [SummaryItem] = [
             SummaryItem(
@@ -569,17 +571,19 @@ struct PopoverView: View {
         let hasCPU = t.cpuTemperature != nil
         let hasGPU = t.gpuTemperature != nil
         let sparklines: [SparklineSpec] = [
-            hasCPU ? SparklineSpec(values: appState.cpuTempHistory, color: .orange, label: "CPU °C") : nil,
-            hasGPU ? SparklineSpec(values: appState.gpuTempHistory, color: .orange.opacity(0.7), label: "GPU °C") : nil
+            hasCPU ? SparklineSpec(values: metrics.cpuTempHistory, color: .orange, label: "CPU °C") : nil,
+            hasGPU ? SparklineSpec(values: metrics.gpuTempHistory, color: .orange.opacity(0.7), label: "GPU °C") : nil
         ].compactMap { $0 }
 
         let fanContent: AnyView? = f.isAvailable ? AnyView(
-            HStack(spacing: 14) {
-                ForEach(f.fans) { fan in
-                    FanAnimation(fan: fan, isActive: appState.isPopoverShown)
+            TimelineView(.animation) { context in
+                HStack(spacing: 14) {
+                    ForEach(f.fans) { fan in
+                        FanAnimation(fan: fan, date: context.date)
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .center)
             }
-            .frame(maxWidth: .infinity, alignment: .center)
         ) : nil
 
         let empty = !t.isAvailable && !f.isAvailable
@@ -690,19 +694,19 @@ struct PopoverView: View {
             icon: "internaldrive",
             trailingHeader: grabber,
             summary: [
-                SummaryItem(label: "Read", value: ByteFormatter.formatRate(bytesPerSecond: appState.diskReadRate), tint: .orange),
-                SummaryItem(label: "Write", value: ByteFormatter.formatRate(bytesPerSecond: appState.diskWriteRate), tint: .purple)
+                SummaryItem(label: "Read", value: ByteFormatter.formatRate(bytesPerSecond: metrics.diskReadRate), tint: .orange),
+                SummaryItem(label: "Write", value: ByteFormatter.formatRate(bytesPerSecond: metrics.diskWriteRate), tint: .purple)
             ],
             sparklines: [
-                SparklineSpec(values: appState.diskReadHistory, color: .orange, label: "Read"),
-                SparklineSpec(values: appState.diskWriteHistory, color: .purple, label: "Write")
+                SparklineSpec(values: metrics.diskReadHistory, color: .orange, label: "Read"),
+                SparklineSpec(values: metrics.diskWriteHistory, color: .purple, label: "Write")
             ],
             columns: [
                 MetricColumn(title: "Process", width: .flexible, alignment: .leading),
                 MetricColumn(title: "Read", width: .fixed(64), alignment: .trailing),
                 MetricColumn(title: "Write", width: .fixed(64), alignment: .trailing)
             ],
-            rows: appState.diskProcesses.map { process in
+            rows: metrics.diskProcesses.map { process in
                 [
                     process.name,
                     ByteFormatter.formatRate(bytesPerSecond: process.readRate),
@@ -717,7 +721,7 @@ struct PopoverView: View {
         HStack {
             settingsButton
 
-            if let error = appState.lastError {
+            if let error = metrics.lastError {
                 Text(error)
                     .font(.caption2)
                     .foregroundStyle(Color.red)

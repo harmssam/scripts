@@ -1,6 +1,6 @@
 import Foundation
 
-struct TempSnapshot: Sendable {
+struct TempSnapshot: Equatable, Sendable {
     let cpuTemperature: Double? // Celsius
     let gpuTemperature: Double? // Celsius
 

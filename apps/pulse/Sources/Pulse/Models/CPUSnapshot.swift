@@ -7,7 +7,7 @@ struct CPUTicks: Equatable, Sendable {
     let nice: UInt32
 }
 
-struct CPUUsageSample: Sendable {
+struct CPUUsageSample: Equatable, Sendable {
     let total: Double
     let user: Double
     let system: Double
@@ -17,7 +17,7 @@ struct CPUUsageSample: Sendable {
     static let invalid = CPUUsageSample(total: 0, user: 0, system: 0, idle: 0, isValid: false)
 }
 
-struct CPUProcessActivity: Identifiable, Sendable {
+struct CPUProcessActivity: Equatable, Identifiable, Sendable {
     let id: Int32
     let name: String
     let usage: Double

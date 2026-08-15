@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-struct MemorySnapshot: Sendable {
+struct MemorySnapshot: Equatable, Sendable {
     let total: UInt64
     let free: UInt64
     let used: UInt64
