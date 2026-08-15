@@ -56,4 +56,40 @@ struct ThermalMonitorTests {
         #expect(tg0jCount == 1)
         #expect(Set(keys).count == keys.count)
     }
+
+    @Test("Transient miss keeps a previously working key")
+    func stickyWorkingKeysSurviveTransientMiss() async {
+        let recorder = KeyRecorder()
+        actor ProbeState {
+            var missTp09 = false
+            func setMiss(_ value: Bool) { missTp09 = value }
+            func value(for key: String) -> Double? {
+                if key == "Tp09" { return missTp09 ? nil : 55.0 }
+                if key == "Tp01" { return 60.0 }
+                if key == "Tg05" { return 50.0 }
+                return nil
+            }
+        }
+        let probe = ProbeState()
+        let monitor = ThermalMonitor(sampleInterval: 0) { key in
+            await recorder.record(key)
+            return await probe.value(for: key)
+        }
+
+        _ = await monitor.sample()
+        _ = await recorder.take()
+
+        await probe.setMiss(true)
+        _ = await monitor.sample()
+        _ = await recorder.take()
+
+        await probe.setMiss(false)
+        _ = await monitor.sample()
+        let thirdKeys = await recorder.take()
+        #expect(thirdKeys.contains("Tp09"))
+        #expect(thirdKeys.contains("Tp01"))
+
+        #expect(ThermalMonitor.stickyWorkingKeys(previous: ["Tp09", "Tp01"], hits: ["Tp01"]) == ["Tp09", "Tp01"])
+        #expect(ThermalMonitor.stickyWorkingKeys(previous: [], hits: ["Tp09"]) == ["Tp09"])
+    }
 }

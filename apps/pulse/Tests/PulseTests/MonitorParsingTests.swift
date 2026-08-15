@@ -32,6 +32,30 @@ struct MonitorParsingTests {
         #expect(rates.bytesOut == 2_000)
     }
 
+    @Test("32-bit counter wrap uses 2^32 - prev + cur")
+    func thirtyTwoBitCounterWrap() {
+        let prev: UInt64 = UInt64(UInt32.max) - 5
+        let cur: UInt64 = 10
+        #expect(NetworkMonitor.byteDelta(current: cur, previous: prev) == 16)
+        #expect(NetworkMonitor.byteDelta(current: 100, previous: 40) == 60)
+    }
+
+    @Test("64-bit interface counters above 2^32 compute rates")
+    func sixtyFourBitInterfaceRates() {
+        let previousRows: [(name: String, bytesIn: UInt64, bytesOut: UInt64)] = [
+            ("en0", 5_000_000_000, 4_000_000_000),
+        ]
+        let currentRows: [(name: String, bytesIn: UInt64, bytesOut: UInt64)] = [
+            ("en0", 5_000_003_000, 4_000_006_000),
+        ]
+        let previousStats = NetworkMonitor.interfaceStats(from: previousRows)
+        let currentStats = NetworkMonitor.interfaceStats(from: currentRows)
+        let previous = Dictionary(uniqueKeysWithValues: previousStats.map { ($0.name, $0) })
+        let rates = NetworkMonitor.interfaceRates(current: currentStats, previous: previous, elapsed: 3)
+        #expect(rates.bytesIn == 1_000)
+        #expect(rates.bytesOut == 2_000)
+    }
+
     @Test("Parses nettop process rows")
     func nettopParsing() async {
         let monitor = NetworkMonitor()

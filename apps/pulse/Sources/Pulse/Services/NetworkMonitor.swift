@@ -125,21 +125,36 @@ actor NetworkMonitor {
     }
 
     private func readInterfaceStats() -> [InterfaceStats] {
-        var ifaddrList: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&ifaddrList) == 0, let first = ifaddrList else { return [] }
-        defer { freeifaddrs(first) }
+        var mib: [Int32] = [CTL_NET, PF_ROUTE, 0, 0, NET_RT_IFLIST2, 0]
+        var length = 0
+        guard sysctl(&mib, u_int(mib.count), nil, &length, nil, 0) == 0, length > 0 else {
+            return []
+        }
+        var buffer = [UInt8](repeating: 0, count: length)
+        guard sysctl(&mib, u_int(mib.count), &buffer, &length, nil, 0) == 0 else {
+            return []
+        }
 
         var rows: [(name: String, bytesIn: UInt64, bytesOut: UInt64)] = []
-        var ptr: UnsafeMutablePointer<ifaddrs>? = first
-        while let addr = ptr {
-            defer { ptr = addr.pointee.ifa_next }
-            guard let sa = addr.pointee.ifa_addr, sa.pointee.sa_family == sa_family_t(AF_LINK) else {
-                continue
+        buffer.withUnsafeBytes { raw in
+            guard var cursor = raw.baseAddress else { return }
+            let end = cursor.advanced(by: length)
+            while cursor.advanced(by: MemoryLayout<if_msghdr>.size) <= end {
+                let hdr = cursor.assumingMemoryBound(to: if_msghdr.self).pointee
+                let msgLen = Int(hdr.ifm_msglen)
+                guard msgLen > 0, cursor.advanced(by: msgLen) <= end else { break }
+                if hdr.ifm_type == UInt8(RTM_IFINFO2), msgLen >= MemoryLayout<if_msghdr2>.size {
+                    let ifm = cursor.assumingMemoryBound(to: if_msghdr2.self).pointee
+                    var nameBuf = [CChar](repeating: 0, count: Int(IFNAMSIZ))
+                    if if_indextoname(UInt32(ifm.ifm_index), &nameBuf) != nil {
+                        let nul = nameBuf.firstIndex(of: 0) ?? nameBuf.endIndex
+                        let name = String(decoding: nameBuf[..<nul].map { UInt8(bitPattern: $0) }, as: UTF8.self)
+                        let data = ifm.ifm_data
+                        rows.append((name, data.ifi_ibytes, data.ifi_obytes))
+                    }
+                }
+                cursor = cursor.advanced(by: msgLen)
             }
-            guard let data = addr.pointee.ifa_data else { continue }
-            let name = String(cString: addr.pointee.ifa_name)
-            let ifdata = data.assumingMemoryBound(to: if_data.self).pointee
-            rows.append((name, UInt64(ifdata.ifi_ibytes), UInt64(ifdata.ifi_obytes)))
         }
         return Self.interfaceStats(from: rows)
     }
@@ -167,8 +182,8 @@ actor NetworkMonitor {
         for stat in current where !stat.name.hasPrefix("lo") {
             guard let previous = previous[stat.name] else { continue }
 
-            let deltaIn = stat.bytesIn >= previous.bytesIn ? stat.bytesIn - previous.bytesIn : stat.bytesIn
-            let deltaOut = stat.bytesOut >= previous.bytesOut ? stat.bytesOut - previous.bytesOut : stat.bytesOut
+            let deltaIn = Self.byteDelta(current: stat.bytesIn, previous: previous.bytesIn)
+            let deltaOut = Self.byteDelta(current: stat.bytesOut, previous: previous.bytesOut)
             totalIn += Self.rate(deltaBytes: deltaIn, elapsed: elapsed)
             totalOut += Self.rate(deltaBytes: deltaOut, elapsed: elapsed)
         }
@@ -211,6 +226,14 @@ actor NetworkMonitor {
         }
 
         return result
+    }
+
+    nonisolated static func byteDelta(current: UInt64, previous: UInt64) -> UInt64 {
+        if current >= previous { return current - previous }
+        if previous <= UInt64(UInt32.max), current <= UInt64(UInt32.max) {
+            return (UInt64(1) << 32) - previous + current
+        }
+        return current
     }
 
     nonisolated static func rate(deltaBytes: UInt64, elapsed: TimeInterval) -> UInt64 {

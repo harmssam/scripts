@@ -25,6 +25,13 @@ struct PopoverMetrics: Equatable {
     var cpuTempHistory: [Double] = []
     var gpuTempHistory: [Double] = []
     var memoryUsedHistory: [Double] = []
+
+    func applying(rates: RefreshRates) -> PopoverMetrics {
+        var next = self
+        next.diskReadRate = rates.diskReadRate
+        next.diskWriteRate = rates.diskWriteRate
+        return next
+    }
 }
 
 @MainActor
@@ -115,7 +122,9 @@ final class AppState: ObservableObject {
     @Published var isPopoverShown = false {
         didSet {
             if isPopoverShown {
+                pendingProcessDetailsKick = true
                 publishCachedPopoverMetrics()
+                Task { await self.kickDetailsIncludingProcesses() }
             }
         }
     }
@@ -141,8 +150,18 @@ final class AppState: ObservableObject {
 
     /// Popover-only metrics collected every refresh but published only while the popover is open.
     private var cachedPopoverMetrics = PopoverMetrics()
+    private var latestRates = RefreshRates()
+    private var pendingProcessDetailsKick = false
 
     let refreshInterval: TimeInterval = 1.0
+
+    nonisolated static func historyRates(latest: RefreshRates, kickTick _: RefreshRates) -> RefreshRates {
+        latest
+    }
+
+    nonisolated static func shouldIncludeProcesses(isPopoverShown: Bool, pendingShowKick: Bool) -> Bool {
+        isPopoverShown || pendingShowKick
+    }
 
     var headerSubtitle: String {
         let down = ByteFormatter.formatMenuBarMbps(bytesPerSecond: downloadRate)
@@ -175,16 +194,27 @@ final class AppState: ObservableObject {
     }
 
     private func applyRates(_ rates: RefreshRates) {
+        latestRates = rates
         downloadRate = rates.downloadRate
         uploadRate = rates.uploadRate
+        cachedPopoverMetrics = cachedPopoverMetrics.applying(rates: rates)
+        downHistory.append(ByteFormatter.megabitsPerSecond(from: rates.downloadRate))
+        upHistory.append(ByteFormatter.megabitsPerSecond(from: rates.uploadRate))
+        diskReadHistoryBuffer.append(Double(rates.diskReadRate))
+        diskWriteHistoryBuffer.append(Double(rates.diskWriteRate))
+        cachedPopoverMetrics.networkDownHistory = downHistory.values
+        cachedPopoverMetrics.networkUpHistory = upHistory.values
+        cachedPopoverMetrics.diskReadHistory = diskReadHistoryBuffer.values
+        cachedPopoverMetrics.diskWriteHistory = diskWriteHistoryBuffer.values
+        if isPopoverShown {
+            publishCachedPopoverMetrics()
+        }
     }
 
-    private func applyDetails(_ rates: RefreshRates, _ details: RefreshDetails) {
+    private func applyDetails(_ details: RefreshDetails) {
         CrashReporter.breadcrumb("AppState.refresh: applying state")
-        var metrics = cachedPopoverMetrics
+        var metrics = cachedPopoverMetrics.applying(rates: latestRates)
         metrics.lastError = nil
-        metrics.diskReadRate = rates.diskReadRate
-        metrics.diskWriteRate = rates.diskWriteRate
         metrics.cpuUsage = details.cpuUsage
         metrics.gpuSnapshot = details.gpuSnapshot
         metrics.tempSnapshot = details.tempSnapshot
@@ -195,11 +225,7 @@ final class AppState: ObservableObject {
         metrics.gpuProcesses = details.gpuProcesses
         metrics.memorySnapshot = details.memorySnapshot
         metrics.memoryProcesses = details.memoryProcesses
-        appendHistoryBuffers(
-            using: metrics,
-            downloadRate: rates.downloadRate,
-            uploadRate: rates.uploadRate
-        )
+        appendDetailHistoryBuffers(using: metrics)
         metrics.networkDownHistory = downHistory.values
         metrics.networkUpHistory = upHistory.values
         metrics.diskReadHistory = diskReadHistoryBuffer.values
@@ -216,16 +242,7 @@ final class AppState: ObservableObject {
         CrashReporter.breadcrumb("AppState.refresh: complete")
     }
 
-    private func appendHistoryBuffers(
-        using metrics: PopoverMetrics,
-        downloadRate: UInt64,
-        uploadRate: UInt64
-    ) {
-        downHistory.append(ByteFormatter.megabitsPerSecond(from: downloadRate))
-        upHistory.append(ByteFormatter.megabitsPerSecond(from: uploadRate))
-        diskReadHistoryBuffer.append(Double(metrics.diskReadRate))
-        diskWriteHistoryBuffer.append(Double(metrics.diskWriteRate))
-
+    private func appendDetailHistoryBuffers(using metrics: PopoverMetrics) {
         if metrics.cpuUsage.isValid {
             cpuHistoryBuffer.append(metrics.cpuUsage.total)
         }
@@ -243,6 +260,31 @@ final class AppState: ObservableObject {
 
         if metrics.memorySnapshot.isValid {
             memoryUsedHistoryBuffer.append(Double(metrics.memorySnapshot.used))
+        }
+    }
+
+    private func consumeIncludeProcesses() -> Bool {
+        let include = Self.shouldIncludeProcesses(
+            isPopoverShown: isPopoverShown,
+            pendingShowKick: pendingProcessDetailsKick
+        )
+        if include { pendingProcessDetailsKick = false }
+        return include
+    }
+
+    private func kickDetailsIncludingProcesses() async {
+        guard await collector.beginDetailsIfIdle() else { return }
+        pendingProcessDetailsKick = false
+        let details = await collector.collectDetails(includeProcesses: true)
+        applyDetails(details)
+        await collector.endDetails()
+        await kickPendingProcessDetailsIfNeeded()
+    }
+
+    private func kickPendingProcessDetailsIfNeeded() async {
+        let pending = pendingProcessDetailsKick && isPopoverShown
+        if pending {
+            await kickDetailsIncludingProcesses()
         }
     }
 
@@ -268,12 +310,13 @@ final class AppState: ObservableObject {
 
                 if await collector.beginDetailsIfIdle() {
                     Task {
-                        let includeProcesses = await MainActor.run { self.isPopoverShown }
+                        let includeProcesses = await MainActor.run { self.consumeIncludeProcesses() }
                         let details = await collector.collectDetails(includeProcesses: includeProcesses)
                         await MainActor.run {
-                            self.applyDetails(rates, details)
+                            self.applyDetails(details)
                         }
                         await collector.endDetails()
+                        await self.kickPendingProcessDetailsIfNeeded()
                     }
                 }
 

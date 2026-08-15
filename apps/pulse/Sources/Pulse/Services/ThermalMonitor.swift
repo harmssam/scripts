@@ -80,8 +80,8 @@ actor ThermalMonitor {
         let (cpu, cpuHits) = await readMaxTemperature(from: cpuProbe)
         let (gpu, gpuHits) = await readMaxTemperature(from: gpuProbe)
 
-        workingCPUKeys = cpuHits
-        workingGPUKeys = gpuHits
+        workingCPUKeys = Self.stickyWorkingKeys(previous: workingCPUKeys, hits: cpuHits)
+        workingGPUKeys = Self.stickyWorkingKeys(previous: workingGPUKeys, hits: gpuHits)
 
         if cpu == nil && gpu == nil {
             AppLogger.debug("No valid temperature readings from SMC", category: AppLogger.monitor)
@@ -104,6 +104,16 @@ actor ThermalMonitor {
             }
         }
         return (maxValue > 0 ? maxValue : nil, hits)
+    }
+
+    nonisolated static func stickyWorkingKeys(previous: [String], hits: [String]) -> [String] {
+        if previous.isEmpty { return hits }
+        var seen = Set(previous)
+        var result = previous
+        for key in hits where seen.insert(key).inserted {
+            result.append(key)
+        }
+        return result
     }
 
     private func sampleFans() async -> FanSnapshot {
