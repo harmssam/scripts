@@ -576,14 +576,12 @@ struct PopoverView: View {
         ].compactMap { $0 }
 
         let fanContent: AnyView? = f.isAvailable ? AnyView(
-            TimelineView(.animation) { context in
-                HStack(spacing: 14) {
-                    ForEach(f.fans) { fan in
-                        FanAnimation(fan: fan, date: context.date)
-                    }
+            HStack(spacing: 14) {
+                ForEach(f.fans) { fan in
+                    FanAnimation(fan: fan)
                 }
-                .frame(maxWidth: .infinity, alignment: .center)
             }
+            .frame(maxWidth: .infinity, alignment: .center)
         ) : nil
 
         let empty = !t.isAvailable && !f.isAvailable

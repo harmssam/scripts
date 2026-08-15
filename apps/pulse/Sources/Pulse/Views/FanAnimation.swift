@@ -3,7 +3,6 @@ import AppKit
 
 struct FanAnimation: View {
     let fan: Fan
-    let date: Date
 
     private static let templatedFanImage: NSImage? = {
         if let image = Bundle.module.image(forResource: "fan") {
@@ -30,11 +29,17 @@ struct FanAnimation: View {
     }
 
     var body: some View {
+        let glyph = staticGlyph
         VStack(spacing: 1) {
-            fanGlyph
-                .onTapGesture {
-                    triggerEasterEggSpin()
-                }
+            TimelineView(.animation) { context in
+                glyph
+                    .rotationEffect(.degrees(
+                        Self.rotationDegrees(rpm: fan.currentRPM, date: context.date) + eggRotation
+                    ))
+            }
+            .onTapGesture {
+                triggerEasterEggSpin()
+            }
 
             Text("fan-\(fan.id + 1)")
                 .font(.system(size: 7, weight: .semibold))
@@ -49,31 +54,23 @@ struct FanAnimation: View {
     }
 
     @ViewBuilder
-    private var fanGlyph: some View {
-        let rotation = Self.rotationDegrees(rpm: fan.currentRPM, date: date) + eggRotation
+    private var staticGlyph: some View {
+        let radius = Self.blurRadius(rpm: fan.currentRPM)
         if let nsImage = Self.templatedFanImage {
-            spunImage(
-                Image(nsImage: nsImage),
-                rotation: rotation
-            )
-            .opacity(0.92)
+            unrotatedImage(Image(nsImage: nsImage), radius: radius)
+                .opacity(0.92)
         } else {
-            spunImage(
-                Image(systemName: "fanblades"),
-                rotation: rotation
-            )
+            unrotatedImage(Image(systemName: "fanblades"), radius: radius)
         }
     }
 
     @ViewBuilder
-    private func spunImage(_ image: Image, rotation: Double) -> some View {
-        let radius = Self.blurRadius(rpm: fan.currentRPM)
+    private func unrotatedImage(_ image: Image, radius: Double) -> some View {
         let view = image
             .resizable()
             .scaledToFit()
             .frame(width: 28, height: 28)
             .foregroundStyle(.orange)
-            .rotationEffect(.degrees(rotation))
         if radius > 0 {
             view.blur(radius: radius)
         } else {
