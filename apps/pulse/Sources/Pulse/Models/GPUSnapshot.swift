@@ -1,13 +1,13 @@
 import Foundation
 
-struct GPUProcessActivity: Identifiable, Sendable {
+struct GPUProcessActivity: Equatable, Identifiable, Sendable {
     let id: Int32
     let name: String
     let usage: Double
     let memoryBytes: UInt64
 }
 
-struct GPUSnapshot: Sendable {
+struct GPUSnapshot: Equatable, Sendable {
     let isAvailable: Bool
     let name: String
     let utilization: Double?

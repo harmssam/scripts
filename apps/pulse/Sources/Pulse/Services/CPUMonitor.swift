@@ -3,11 +3,6 @@ import Foundation
 
 actor CPUMonitor {
     private var previousTicks: CPUTicks?
-    private var cachedProcesses: [CPUProcessActivity] = []
-    private var lastProcessSampleTime: Date?
-    private var processSampleInFlight = false
-
-    private let processSampleInterval: TimeInterval = 3
 
     func sampleUsage() -> CPUUsageSample {
         guard let current = readHostCPULoad() else {
@@ -21,58 +16,6 @@ actor CPUMonitor {
         }
 
         return CPUUsageCalculator.usage(current: current, previous: previous)
-    }
-
-    func sampleProcesses(limit: Int = 5) async -> [CPUProcessActivity] {
-        let now = Date()
-        if let lastSample = lastProcessSampleTime,
-           now.timeIntervalSince(lastSample) < processSampleInterval {
-            return cachedProcesses
-        }
-        if processSampleInFlight {
-            return cachedProcesses
-        }
-
-        processSampleInFlight = true
-        defer {
-            processSampleInFlight = false
-            lastProcessSampleTime = Date()
-        }
-
-        guard let output = try? await ProcessRunner.run(
-            executable: "/bin/ps",
-            arguments: ["-Aceo", "pid,pcpu,comm", "-r"]
-        ) else {
-            return cachedProcesses
-        }
-
-        let processes = parseProcessOutput(output, limit: limit)
-        cachedProcesses = processes
-        return processes
-    }
-
-    func parseProcessOutput(_ output: String, limit: Int) -> [CPUProcessActivity] {
-        var processes: [CPUProcessActivity] = []
-
-        for line in output.components(separatedBy: "\n").dropFirst() {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.isEmpty { continue }
-
-            let parts = trimmed.split(separator: " ", omittingEmptySubsequences: true)
-            guard parts.count >= 3,
-                  let pid = Int32(parts[0]),
-                  let usage = Double(parts[1].replacingOccurrences(of: ",", with: ".")) else {
-                continue
-            }
-
-            let name = (String(parts[2]) as NSString).lastPathComponent
-            guard usage > 0 else { continue }
-
-            processes.append(CPUProcessActivity(id: pid, name: name, usage: usage / 100))
-            if processes.count >= limit { break }
-        }
-
-        return processes
     }
 
     private func readHostCPULoad() -> CPUTicks? {

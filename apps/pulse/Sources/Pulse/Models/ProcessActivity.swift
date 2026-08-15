@@ -1,6 +1,6 @@
 import Foundation
 
-struct ProcessActivity: Identifiable, Sendable {
+struct ProcessActivity: Equatable, Identifiable, Sendable {
     let id: Int32
     let name: String
     let readRate: UInt64
@@ -9,7 +9,7 @@ struct ProcessActivity: Identifiable, Sendable {
     var totalRate: UInt64 { readRate + writeRate }
 }
 
-struct NetworkProcessActivity: Identifiable, Sendable {
+struct NetworkProcessActivity: Equatable, Identifiable, Sendable {
     let id: Int32
     let name: String
     let downloadRate: UInt64

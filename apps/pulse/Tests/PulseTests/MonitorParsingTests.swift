@@ -1,22 +1,59 @@
+import Darwin
+import Foundation
 import Testing
 @testable import Pulse
 
 @Suite("Monitor parsing")
 struct MonitorParsingTests {
-    @Test("Parses netstat interface rows")
-    func netstatParsing() async {
-        let monitor = NetworkMonitor()
-        let output = """
-        Name       Mtu   Network       Address            Ipkts Ierrs    Ibytes    Opkts Oerrs     Obytes  Coll
-        lo0        16384 <Link#1>      0:0:0:0:0:0:0:0        0     0         0        0     0          0     0
-        en0        1500  <Link#11>     0:0:0:0:0:0:0:0     1000     0   1000000      500     0     500000     0
-        """
+    @Test("getifaddrs mapper drops loopback and matches sampleRates math")
+    func interfaceRatesFromSnapshots() {
+        let previousRows: [(name: String, bytesIn: UInt64, bytesOut: UInt64)] = [
+            ("lo0", 1_000, 1_000),
+            ("en0", 1_000_000, 500_000),
+        ]
+        let currentRows: [(name: String, bytesIn: UInt64, bytesOut: UInt64)] = [
+            ("lo0", 9_000, 8_000),
+            ("en0", 1_003_000, 506_000),
+        ]
 
-        let stats = await monitor.parseNetstatOutput(output)
-        let en0 = stats.first { $0.name == "en0" }
+        let previousStats = NetworkMonitor.interfaceStats(from: previousRows)
+        let currentStats = NetworkMonitor.interfaceStats(from: currentRows)
 
-        #expect(en0?.bytesIn == 1_000_000)
-        #expect(en0?.bytesOut == 500_000)
+        #expect(previousStats.contains { $0.name.hasPrefix("lo") } == false)
+        #expect(currentStats.contains { $0.name.hasPrefix("lo") } == false)
+
+        let en0 = currentStats.first { $0.name == "en0" }
+        #expect(en0?.bytesIn == 1_003_000)
+        #expect(en0?.bytesOut == 506_000)
+
+        let previous = Dictionary(uniqueKeysWithValues: previousStats.map { ($0.name, $0) })
+        let rates = NetworkMonitor.interfaceRates(current: currentStats, previous: previous, elapsed: 3)
+        #expect(rates.bytesIn == 1_000)
+        #expect(rates.bytesOut == 2_000)
+    }
+
+    @Test("32-bit counter wrap uses 2^32 - prev + cur")
+    func thirtyTwoBitCounterWrap() {
+        let prev: UInt64 = UInt64(UInt32.max) - 5
+        let cur: UInt64 = 10
+        #expect(NetworkMonitor.byteDelta(current: cur, previous: prev) == 16)
+        #expect(NetworkMonitor.byteDelta(current: 100, previous: 40) == 60)
+    }
+
+    @Test("64-bit interface counters above 2^32 compute rates")
+    func sixtyFourBitInterfaceRates() {
+        let previousRows: [(name: String, bytesIn: UInt64, bytesOut: UInt64)] = [
+            ("en0", 5_000_000_000, 4_000_000_000),
+        ]
+        let currentRows: [(name: String, bytesIn: UInt64, bytesOut: UInt64)] = [
+            ("en0", 5_000_003_000, 4_000_006_000),
+        ]
+        let previousStats = NetworkMonitor.interfaceStats(from: previousRows)
+        let currentStats = NetworkMonitor.interfaceStats(from: currentRows)
+        let previous = Dictionary(uniqueKeysWithValues: previousStats.map { ($0.name, $0) })
+        let rates = NetworkMonitor.interfaceRates(current: currentStats, previous: previous, elapsed: 3)
+        #expect(rates.bytesIn == 1_000)
+        #expect(rates.bytesOut == 2_000)
     }
 
     @Test("Parses nettop process rows")
@@ -51,6 +88,17 @@ struct MonitorParsingTests {
         #expect(ByteFormatter.formatMenuBarMbps(bytesPerSecond: 12_500_000) == "100")
     }
 
+    @Test("Disk statistics dictionary totals match Bytes (Read) and Bytes (Write)")
+    func diskStatisticsDictionary() {
+        let statistics: [String: Any] = [
+            "Bytes (Read)": 472_490_442_752 as UInt64,
+            "Bytes (Write)": 191_732_469_760 as UInt64,
+        ]
+        let totals = DiskMonitor.cumulativeBytes(from: statistics)
+        #expect(totals.read == 472_490_442_752)
+        #expect(totals.write == 191_732_469_760)
+    }
+
     @Test("Parses ioreg statistics dictionary lines")
     func ioregStatisticsParsing() async {
         let monitor = DiskMonitor()
@@ -63,6 +111,160 @@ struct MonitorParsingTests {
 
         #expect(read == 472_490_442_752)
         #expect(write == 191_732_469_760)
+    }
+
+    @Test("Network process rate divides delta by elapsed seconds")
+    func networkProcessRate() {
+        #expect(NetworkMonitor.rate(deltaBytes: 3000, elapsed: 3) == 1000)
+        #expect(NetworkMonitor.rate(deltaBytes: 1000, elapsed: 0) == 0)
+        #expect(NetworkMonitor.rate(deltaBytes: 1000, elapsed: -1) == 0)
+    }
+
+    @Test("Failed process sample does not advance the rate timestamp")
+    func failedProcessSampleKeepsRateTimestamp() {
+        let previous = Date(timeIntervalSince1970: 1_000)
+        let now = Date(timeIntervalSince1970: 1_003)
+        #expect(
+            NetworkMonitor.nextRateTimestamp(previous: previous, sampleSucceeded: false, now: now)
+                == previous
+        )
+        #expect(
+            NetworkMonitor.nextRateTimestamp(previous: nil, sampleSucceeded: false, now: now) == nil
+        )
+        #expect(
+            NetworkMonitor.nextRateTimestamp(previous: previous, sampleSucceeded: true, now: now)
+                == now
+        )
+    }
+
+    @Test("shouldRefreshProcesses gates interval and in-flight")
+    func processRefreshPredicate() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let recent = now.addingTimeInterval(-0.1)
+        let stale = now.addingTimeInterval(-4)
+        #expect(
+            NetworkMonitor.shouldRefreshProcesses(
+                now: now, last: recent, interval: 3, inFlight: false
+            ) == false
+        )
+        #expect(
+            NetworkMonitor.shouldRefreshProcesses(
+                now: now, last: stale, interval: 3, inFlight: false
+            ) == true
+        )
+        #expect(
+            NetworkMonitor.shouldRefreshProcesses(
+                now: now, last: stale, interval: 3, inFlight: true
+            ) == false
+        )
+        #expect(
+            NetworkMonitor.shouldRefreshProcesses(
+                now: now, last: nil, interval: 3, inFlight: false
+            ) == true
+        )
+        #expect(
+            NetworkMonitor.shouldRefreshProcesses(
+                now: now, last: nil, interval: 3, inFlight: true
+            ) == false
+        )
+    }
+
+    @Test("Memory used is active+wired+compressed; free includes inactive")
+    func memoryBucketsFromPageCounts() {
+        // Units: `total` is bytes. active/wired/compressed/freePages/inactive/speculative
+        // are page counts; `from` multiplies them by getpagesize().
+        let pageSize = UInt64(getpagesize())
+        let gib: UInt64 = 1 << 30
+        func pages(_ gibCount: UInt64) -> UInt64 { gibCount * gib / pageSize }
+
+        let snapshot = MemorySnapshot.from(
+            total: 16 * gib,
+            active: pages(4),
+            wired: pages(2),
+            compressed: pages(1),
+            freePages: pages(1),
+            inactive: pages(8),
+            speculative: 0
+        )
+        #expect(snapshot.used == 7 * gib)
+        #expect(snapshot.free == 9 * gib)
+        #expect(snapshot.isValid)
+
+        let withSpeculative = MemorySnapshot.from(
+            total: 16 * gib,
+            active: pages(4),
+            wired: pages(2),
+            compressed: pages(1),
+            freePages: pages(1),
+            inactive: pages(8),
+            speculative: pages(1)
+        )
+        #expect(withSpeculative.used == 7 * gib)
+        #expect(withSpeculative.free == 10 * gib)
+    }
+
+    @Test("Shared process table ranks CPU by pcpu and memory by rss")
+    func sharedProcessTableRanking() {
+        let output = """
+          PID  %CPU    RSS COMM
+          452  44.0   1024 WindowServer
+          765  23.2    512 Terminal
+          100   0.0      8 idle
+          999   5.0   8192 Safari
+           50   1.0   4096 Mail
+        """
+        let rows = ProcessTable.parse(output)
+        let cpu = ProcessTable.topCPU(rows, limit: 3)
+        let memory = ProcessTable.topMemory(rows, limit: 3)
+
+        #expect(cpu.map(\.id) == [452, 765, 999])
+        #expect(cpu[0].name == "WindowServer")
+        #expect(cpu[0].usage == 0.44)
+        #expect(abs(cpu[1].usage - 0.232) < 0.0001)
+        #expect(memory.map(\.id) == [999, 50, 452])
+        #expect(memory[0].memoryBytes == 8192 * 1024)
+        #expect(memory[1].name == "Mail")
+    }
+
+    @Test("Disk prune drops previous stats for PIDs missing from the current table")
+    func diskPruneMissingPIDs() async {
+        let monitor = DiskMonitor()
+        await monitor.replacePreviousProcessStats([
+            1: (read: 100, write: 10),
+            2: (read: 200, write: 20),
+        ])
+        let table = [ProcessTableRow(pid: 2, cpuPercent: 1, rssKB: 8, name: "keep")]
+        _ = await monitor.sampleProcesses(from: table, elapsed: 1)
+        #expect(await monitor.previousProcessStatPIDs() == [2])
+    }
+
+    @Test("collectDetails(includeProcesses: false) does not sample the process table")
+    func collectDetailsSkipsProcessTableWhenClosed() async {
+        let now = Date(timeIntervalSince1970: 1_000)
+        #expect(
+            MonitorCollector.shouldSampleProcessTable(
+                includeProcesses: false, now: now, last: nil, interval: 3
+            ) == false
+        )
+        #expect(
+            MonitorCollector.shouldSampleProcessTable(
+                includeProcesses: true, now: now, last: nil, interval: 3
+            ) == true
+        )
+        #expect(
+            MonitorCollector.shouldSampleProcessTable(
+                includeProcesses: true, now: now, last: now.addingTimeInterval(-0.1), interval: 3
+            ) == false
+        )
+        #expect(
+            MonitorCollector.shouldSampleProcessTable(
+                includeProcesses: true, now: now, last: now.addingTimeInterval(-4), interval: 3
+            ) == true
+        )
+
+        let collector = MonitorCollector()
+        _ = await collector.collectDetails(includeProcesses: false)
+        #expect(await collector.processTableSampleCount == 0)
     }
 
     @Test("Thermal monitor samples without crashing on Apple Silicon")

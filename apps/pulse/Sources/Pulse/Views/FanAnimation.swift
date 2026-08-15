@@ -3,7 +3,6 @@ import AppKit
 
 struct FanAnimation: View {
     let fan: Fan
-    var isActive: Bool = true
 
     private static let templatedFanImage: NSImage? = {
         if let image = Bundle.module.image(forResource: "fan") {
@@ -13,99 +12,77 @@ struct FanAnimation: View {
         return nil
     }()
 
-    @State private var rotation: Double = 0
-    @State private var spinBoost: Double = 0
-    /// Blur decays faster than spin so the fan stays visibly spinning after motion blur clears.
-    @State private var blurBoost: Double = 0
     @State private var eggRotation: Double = 0
 
-    // High frequency timer for smooth rotation
-    private let timer = Timer.publish(every: 1.0 / 30.0, on: .main, in: .common).autoconnect()
+    /// rpm < 250 → 0; rpm < 2000 → 0.4 (small); else 0.8 (medium)
+    nonisolated static func blurRadius(rpm: Double) -> Double {
+        if rpm < 250 { return 0 }
+        if rpm < 2000 { return 0.4 }
+        return 0.8
+    }
 
-    /// Prior peak was 2.0pt; scale entire curve by 2/3 (~33% reduction).
-    private static let blurScale: Double = 2.0 / 3.0
-
-    private var blurRadius: Double {
-        // Blur uses blurBoost (short decay), not spinBoost (long wind-down).
-        let base = min(Double(fan.currentRPM) / 5200.0, 1.8)
-        let rpm = (base + blurBoost) * 5200.0
-        if rpm < 250 {
-            return 0
-        }
-        return min((rpm - 250) / 2500.0, 2.0) * Self.blurScale
+    static func rotationDegrees(rpm: Double, date: Date) -> Double {
+        let normalized = min(max(rpm, 0) / 5200.0, 1.8)
+        let degreesPerSecond = normalized * 19.0 * 30.0
+        return (date.timeIntervalSinceReferenceDate * degreesPerSecond)
+            .truncatingRemainder(dividingBy: 360)
     }
 
     var body: some View {
+        let glyph = staticGlyph
         VStack(spacing: 1) {
-            // The fan icon with rotation and speed-dependent blur
-            if let nsImage = Self.templatedFanImage {
-                Image(nsImage: nsImage)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 28, height: 28)
-                    .foregroundStyle(.orange)
-                    .rotationEffect(.degrees(rotation + eggRotation))
-                    .blur(radius: blurRadius)
-                    .opacity(0.92)
-                    .onTapGesture {
-                        triggerEasterEggSpin()
-                    }
-            } else {
-                // Fallback if image not found
-                Image(systemName: "fanblades")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 28, height: 28)
-                    .foregroundStyle(.orange)
-                    .rotationEffect(.degrees(rotation + eggRotation))
-                    .blur(radius: blurRadius)
-                    .onTapGesture {
-                        triggerEasterEggSpin()
-                    }
+            TimelineView(.animation) { context in
+                glyph
+                    .rotationEffect(.degrees(
+                        Self.rotationDegrees(rpm: fan.currentRPM, date: context.date) + eggRotation
+                    ))
+            }
+            .onTapGesture {
+                triggerEasterEggSpin()
             }
 
-            // Small label "fan-1"
             Text("fan-\(fan.id + 1)")
                 .font(.system(size: 7, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
 
-            // RPM
             Text("\(SafeNumeric.roundedInt(fan.currentRPM))")
                 .font(.system(size: 8, weight: .medium, design: .monospaced))
                 .foregroundStyle(.orange)
                 .lineLimit(1)
         }
-        .onReceive(timer) { _ in
-            guard isActive else { return }
-            updateRotation()
+    }
+
+    @ViewBuilder
+    private var staticGlyph: some View {
+        let radius = Self.blurRadius(rpm: fan.currentRPM)
+        if let nsImage = Self.templatedFanImage {
+            unrotatedImage(Image(nsImage: nsImage), radius: radius)
+                .opacity(0.92)
+        } else {
+            unrotatedImage(Image(systemName: "fanblades"), radius: radius)
         }
     }
 
-    private func updateRotation() {
-        // Normalize speed. Typical MacBook fans go up to ~5500-7000 RPM.
-        let normalizedSpeed = min(fan.currentRPM / 5200.0, 1.8)
-        let effectiveSpeed = normalizedSpeed + spinBoost
-
-        // Base rotation speed in degrees per frame (30fps)
-        // At full speed this gives a nice fast but not blurry spin.
-        let degreesPerFrame = effectiveSpeed * 19.0
-
-        rotation = (rotation + degreesPerFrame).truncatingRemainder(dividingBy: 360)
+    @ViewBuilder
+    private func unrotatedImage(_ image: Image, radius: Double) -> some View {
+        let view = image
+            .resizable()
+            .scaledToFit()
+            .frame(width: 28, height: 28)
+            .foregroundStyle(.orange)
+        if radius > 0 {
+            view.blur(radius: radius)
+        } else {
+            view
+        }
     }
 
     private func triggerEasterEggSpin() {
-        // Quick ramp up (0.4s). Blur clears in ~0.75s; spin keeps coasting for 4s.
         withAnimation(.linear(duration: 0.4)) {
-            spinBoost = 5.0
-            blurBoost = 1.0
             eggRotation += 360 * 8
         }
-        withAnimation(.easeOut(duration: 0.75).delay(0.4)) {
-            blurBoost = 0
-        }
         withAnimation(.easeOut(duration: 4.0).delay(0.4)) {
-            spinBoost = 0
             eggRotation += 360 * 4
         }
     }

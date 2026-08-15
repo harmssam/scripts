@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LLM Switchboard</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div id="auth-gate" class="auth-gate hidden">
+      <div class="auth-card">
+        <h1>LLM Switchboard</h1>
+        <p class="muted">Enter the gateway key to open the dashboard.</p>
+        <form id="auth-form">
+          <label for="auth-key">Gateway key</label>
+          <input id="auth-key" type="password" autocomplete="current-password" required />
+          <button type="submit" class="btn primary">Unlock</button>
+          <p id="auth-error" class="error hidden"></p>
+        </form>
+      </div>
+    </div>
+
+    <div id="app" class="app hidden">
+      <header class="topbar">
+        <div class="brand">
+          <span class="logo">⚡</span>
+          <div>
+            <strong>LLM Switchboard</strong>
+            <div id="config-path" class="muted tiny"></div>
+          </div>
+        </div>
+        <nav class="tabs" id="nav">
+          <button data-section="overview" class="tab active">Overview</button>
+          <button data-section="plans" class="tab">Plans</button>
+          <button data-section="groups" class="tab">Groups</button>
+          <button data-section="routes" class="tab">Routes</button>
+          <button data-section="activity" class="tab">Activity</button>
+          <button data-section="settings" class="tab">Settings</button>
+        </nav>
+        <button id="btn-logout" class="btn ghost" type="button">Lock</button>
+      </header>
+
+      <main class="content">
+        <!-- Overview -->
+        <section id="section-overview" class="section">
+          <h2>Overview</h2>
+          <div class="stat-grid" id="stat-grid">
+            <div class="stat-card"><div class="stat-label">Requests</div><div class="stat-value" id="stat-requests">—</div></div>
+            <div class="stat-card"><div class="stat-label">Successes</div><div class="stat-value" id="stat-successes">—</div></div>
+            <div class="stat-card"><div class="stat-label">Failures</div><div class="stat-value" id="stat-failures">—</div></div>
+            <div class="stat-card"><div class="stat-label">Failovers</div><div class="stat-value" id="stat-failovers">—</div></div>
+          </div>
+          <h3>Plan health</h3>
+          <div id="health-chips" class="chips"></div>
+        </section>
+
+        <!-- Plans -->
+        <section id="section-plans" class="section hidden">
+          <div class="section-head">
+            <h2>Plans</h2>
+            <button type="button" class="btn primary" id="btn-add-plan">Add plan</button>
+          </div>
+          <div id="plans-list" class="table-wrap"></div>
+          <form id="plan-form" class="form-card hidden">
+            <h3 id="plan-form-title">Add plan</h3>
+            <input type="hidden" id="plan-edit-id" />
+            <div class="form-row">
+              <label>ID <input id="plan-id" required /></label>
+              <label>Name <input id="plan-name" required /></label>
+            </div>
+            <div class="form-row">
+              <label class="grow">Base URL <input id="plan-baseUrl" required placeholder="https://api.openai.com/v1" /></label>
+            </div>
+            <div class="form-row">
+              <label class="grow">API key <input id="plan-apiKey" type="password" placeholder="leave blank to keep" /></label>
+              <label class="check"><input type="checkbox" id="plan-enabled" checked /> Enabled</label>
+            </div>
+            <div class="form-actions">
+              <button type="submit" class="btn primary">Save</button>
+              <button type="button" class="btn ghost" id="plan-form-cancel">Cancel</button>
+            </div>
+            <p id="plan-form-error" class="error hidden"></p>
+          </form>
+        </section>
+
+        <!-- Groups -->
+        <section id="section-groups" class="section hidden">
+          <div class="section-head">
+            <h2>Groups</h2>
+            <button type="button" class="btn primary" id="btn-add-group">Add group</button>
+          </div>
+          <div id="groups-list" class="table-wrap"></div>
+          <form id="group-form" class="form-card hidden">
+            <h3 id="group-form-title">Add group</h3>
+            <input type="hidden" id="group-edit-id" />
+            <div class="form-row">
+              <label>ID <input id="group-id" required /></label>
+              <label>Name <input id="group-name" required /></label>
+            </div>
+            <div class="form-row">
+              <label>Strategy
+                <select id="group-strategy">
+                  <option value="equal">equal</option>
+                  <option value="priority">priority</option>
+                </select>
+              </label>
+              <label>Cooldown (s) <input id="group-cooldown" type="number" min="0" value="120" /></label>
+            </div>
+            <div class="form-row">
+              <label class="grow">Plan IDs (comma-separated) <input id="group-planIds" placeholder="plan-a, plan-b" /></label>
+            </div>
+            <div class="form-actions">
+              <button type="submit" class="btn primary">Save</button>
+              <button type="button" class="btn ghost" id="group-form-cancel">Cancel</button>
+            </div>
+            <p id="group-form-error" class="error hidden"></p>
+          </form>
+        </section>
+
+        <!-- Routes -->
+        <section id="section-routes" class="section hidden">
+          <div class="section-head">
+            <h2>Routes</h2>
+            <button type="button" class="btn primary" id="btn-add-route">Add route</button>
+          </div>
+          <div id="routes-list" class="table-wrap"></div>
+          <form id="route-form" class="form-card hidden">
+            <h3 id="route-form-title">Add route</h3>
+            <input type="hidden" id="route-edit-id" />
+            <div class="form-row">
+              <label>ID <input id="route-id" required /></label>
+              <label>Model <input id="route-model" required placeholder="gpt-4o" /></label>
+            </div>
+            <div class="form-row">
+              <label>Target type
+                <select id="route-targetType">
+                  <option value="group">group</option>
+                  <option value="plan">plan</option>
+                </select>
+              </label>
+              <label>Target ID <input id="route-targetId" required /></label>
+            </div>
+            <div class="form-row">
+              <label class="grow">Upstream model (optional) <input id="route-upstreamModel" /></label>
+            </div>
+            <div class="form-actions">
+              <button type="submit" class="btn primary">Save</button>
+              <button type="button" class="btn ghost" id="route-form-cancel">Cancel</button>
+            </div>
+            <p id="route-form-error" class="error hidden"></p>
+          </form>
+        </section>
+
+        <!-- Activity -->
+        <section id="section-activity" class="section hidden">
+          <div class="section-head">
+            <h2>Activity</h2>
+            <button type="button" class="btn ghost" id="btn-refresh-events">Refresh</button>
+          </div>
+          <div id="events-list" class="events mono"></div>
+        </section>
+
+        <!-- Settings -->
+        <section id="section-settings" class="section hidden">
+          <h2>Settings</h2>
+          <form id="settings-form" class="form-card">
+            <div class="form-row">
+              <label class="grow">Gateway key <input id="settings-gatewayKey" type="password" placeholder="leave blank to keep" /></label>
+            </div>
+            <div class="form-row">
+              <label>Request timeout (ms) <input id="settings-timeout" type="number" min="1000" /></label>
+              <label>Max failover attempts <input id="settings-maxFailover" type="number" min="1" /></label>
+            </div>
+            <div class="form-row">
+              <label>Host <input id="settings-host" /></label>
+              <label>Port <input id="settings-port" type="number" min="1" max="65535" /></label>
+            </div>
+            <div class="form-actions">
+              <button type="submit" class="btn primary">Save settings</button>
+              <button type="button" class="btn ghost" id="btn-export-config">Export config JSON</button>
+            </div>
+            <p id="settings-msg" class="ok hidden"></p>
+            <p id="settings-error" class="error hidden"></p>
+          </form>
+          <p class="muted">Config path: <code id="settings-config-path">—</code></p>
+        </section>
+      </main>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

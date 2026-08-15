@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 actor NetworkMonitor {
@@ -12,13 +13,14 @@ actor NetworkMonitor {
     private var previousProcessBytes: [String: (bytesIn: UInt64, bytesOut: UInt64, pid: Int32)] = [:]
     private var cachedProcesses: [NetworkProcessActivity] = []
     private var lastProcessSampleTime: Date?
+    private var lastProcessAttemptTime: Date?
     private var processSampleInFlight = false
     private let processSampleInterval: TimeInterval = 3
     /// nettop -L 1 routinely takes ~5s on busy systems; keep margin above that.
     private let nettopTimeout: TimeInterval = 10
 
     func sampleRates() async -> (bytesIn: UInt64, bytesOut: UInt64) {
-        let current = await readInterfaceStats()
+        let current = readInterfaceStats()
         let now = Date()
 
         defer {
@@ -30,39 +32,33 @@ actor NetworkMonitor {
             return (0, 0)
         }
 
-        let elapsed = now.timeIntervalSince(previousTime)
-        guard elapsed > 0 else { return (0, 0) }
-
-        var totalIn: UInt64 = 0
-        var totalOut: UInt64 = 0
-
-        for stat in current where !stat.name.hasPrefix("lo") {
-            guard let previous = previousStats[stat.name] else { continue }
-
-            let deltaIn = stat.bytesIn >= previous.bytesIn ? stat.bytesIn - previous.bytesIn : stat.bytesIn
-            let deltaOut = stat.bytesOut >= previous.bytesOut ? stat.bytesOut - previous.bytesOut : stat.bytesOut
-            totalIn += UInt64(Double(deltaIn) / elapsed)
-            totalOut += UInt64(Double(deltaOut) / elapsed)
-        }
-
-        return (totalIn, totalOut)
+        return Self.interfaceRates(
+            current: current,
+            previous: previousStats,
+            elapsed: now.timeIntervalSince(previousTime)
+        )
     }
 
-    func sampleProcesses(limit: Int = 5) async -> [NetworkProcessActivity] {
+    func sampleProcesses(limit: Int = 5) -> [NetworkProcessActivity] {
         let now = Date()
-        if let lastSample = lastProcessSampleTime,
-           now.timeIntervalSince(lastSample) < processSampleInterval {
-            return cachedProcesses
-        }
-        if processSampleInFlight {
+        guard Self.shouldRefreshProcesses(
+            now: now,
+            last: lastProcessAttemptTime,
+            interval: processSampleInterval,
+            inFlight: processSampleInFlight
+        ) else {
             return cachedProcesses
         }
 
         processSampleInFlight = true
-        defer {
-            processSampleInFlight = false
-            lastProcessSampleTime = Date()
+        Task.detached { [self] in
+            await self.refreshProcessSample(limit: limit)
         }
+        return cachedProcesses
+    }
+
+    private func refreshProcessSample(limit: Int) async {
+        defer { processSampleInFlight = false }
 
         CrashReporter.breadcrumb("NetworkMonitor.sampleProcesses: nettop start")
         let output: String
@@ -79,11 +75,20 @@ actor NetworkMonitor {
         } catch {
             AppLogger.debug("nettop failed: \(error)", category: AppLogger.monitor)
             CrashReporter.breadcrumb("NetworkMonitor.sampleProcesses: nettop failed")
-            return cachedProcesses
+            let failedAt = Date()
+            lastProcessAttemptTime = failedAt
+            lastProcessSampleTime = Self.nextRateTimestamp(
+                previous: lastProcessSampleTime,
+                sampleSucceeded: false,
+                now: failedAt
+            )
+            return
         }
         CrashReporter.breadcrumb("NetworkMonitor.sampleProcesses: nettop done")
 
         let current = parseNettopOutput(output)
+        let sampleTime = Date()
+        let elapsed = lastProcessSampleTime.map { sampleTime.timeIntervalSince($0) } ?? 0
         var activities: [NetworkProcessActivity] = []
 
         for (name, bytes) in current {
@@ -92,8 +97,8 @@ actor NetworkMonitor {
             let downloadDelta = bytes.bytesIn >= previous.bytesIn ? bytes.bytesIn - previous.bytesIn : bytes.bytesIn
             let uploadDelta = bytes.bytesOut >= previous.bytesOut ? bytes.bytesOut - previous.bytesOut : bytes.bytesOut
 
-            let downloadRate = UInt64(Double(downloadDelta))
-            let uploadRate = UInt64(Double(uploadDelta))
+            let downloadRate = Self.rate(deltaBytes: downloadDelta, elapsed: elapsed)
+            let uploadRate = Self.rate(deltaBytes: uploadDelta, elapsed: elapsed)
 
             if downloadRate > 0 || uploadRate > 0 {
                 activities.append(NetworkProcessActivity(
@@ -106,54 +111,84 @@ actor NetworkMonitor {
         }
 
         previousProcessBytes = current
+        lastProcessSampleTime = Self.nextRateTimestamp(
+            previous: lastProcessSampleTime,
+            sampleSucceeded: true,
+            now: sampleTime
+        )
+        lastProcessAttemptTime = sampleTime
 
         cachedProcesses = activities
             .sorted { $0.totalRate > $1.totalRate }
             .prefix(limit)
             .map { $0 }
-        return cachedProcesses
     }
 
-    private func readInterfaceStats() async -> [InterfaceStats] {
-        guard let output = try? await ProcessRunner.run(
-            executable: "/usr/sbin/netstat",
-            arguments: ["-ib"]
-        ) else {
+    private func readInterfaceStats() -> [InterfaceStats] {
+        var mib: [Int32] = [CTL_NET, PF_ROUTE, 0, 0, NET_RT_IFLIST2, 0]
+        var length = 0
+        guard sysctl(&mib, u_int(mib.count), nil, &length, nil, 0) == 0, length > 0 else {
             return []
         }
-        return parseNetstatOutput(output)
-    }
-
-    func parseNetstatOutput(_ output: String) -> [InterfaceStats] {
-        var stats: [String: InterfaceStats] = [:]
-
-        for line in output.components(separatedBy: "\n").dropFirst() {
-            let columns = line.split(separator: " ", omittingEmptySubsequences: true)
-            guard columns.count >= 10,
-                  let packetsIn = UInt64(columns[4]),
-                  let bytesIn = UInt64(columns[6]),
-                  let packetsOut = UInt64(columns[7]),
-                  let bytesOut = UInt64(columns[9]) else {
-                continue
-            }
-
-            let name = String(columns[0])
-            if var existing = stats[name] {
-                existing = InterfaceStats(
-                    name: name,
-                    bytesIn: existing.bytesIn + bytesIn,
-                    bytesOut: existing.bytesOut + bytesOut
-                )
-                stats[name] = existing
-            } else {
-                stats[name] = InterfaceStats(name: name, bytesIn: bytesIn, bytesOut: bytesOut)
-            }
-
-            _ = packetsIn
-            _ = packetsOut
+        var buffer = [UInt8](repeating: 0, count: length)
+        guard sysctl(&mib, u_int(mib.count), &buffer, &length, nil, 0) == 0 else {
+            return []
         }
 
+        var rows: [(name: String, bytesIn: UInt64, bytesOut: UInt64)] = []
+        buffer.withUnsafeBytes { raw in
+            guard var cursor = raw.baseAddress else { return }
+            let end = cursor.advanced(by: length)
+            while cursor.advanced(by: MemoryLayout<if_msghdr>.size) <= end {
+                let hdr = cursor.assumingMemoryBound(to: if_msghdr.self).pointee
+                let msgLen = Int(hdr.ifm_msglen)
+                guard msgLen > 0, cursor.advanced(by: msgLen) <= end else { break }
+                if hdr.ifm_type == UInt8(RTM_IFINFO2), msgLen >= MemoryLayout<if_msghdr2>.size {
+                    let ifm = cursor.assumingMemoryBound(to: if_msghdr2.self).pointee
+                    var nameBuf = [CChar](repeating: 0, count: Int(IFNAMSIZ))
+                    if if_indextoname(UInt32(ifm.ifm_index), &nameBuf) != nil {
+                        let nul = nameBuf.firstIndex(of: 0) ?? nameBuf.endIndex
+                        let name = String(decoding: nameBuf[..<nul].map { UInt8(bitPattern: $0) }, as: UTF8.self)
+                        let data = ifm.ifm_data
+                        rows.append((name, data.ifi_ibytes, data.ifi_obytes))
+                    }
+                }
+                cursor = cursor.advanced(by: msgLen)
+            }
+        }
+        return Self.interfaceStats(from: rows)
+    }
+
+    nonisolated static func interfaceStats(
+        from rows: [(name: String, bytesIn: UInt64, bytesOut: UInt64)]
+    ) -> [InterfaceStats] {
+        var stats: [String: InterfaceStats] = [:]
+        for row in rows where !row.name.hasPrefix("lo") {
+            stats[row.name] = InterfaceStats(name: row.name, bytesIn: row.bytesIn, bytesOut: row.bytesOut)
+        }
         return Array(stats.values)
+    }
+
+    nonisolated static func interfaceRates(
+        current: [InterfaceStats],
+        previous: [String: InterfaceStats],
+        elapsed: TimeInterval
+    ) -> (bytesIn: UInt64, bytesOut: UInt64) {
+        guard elapsed > 0 else { return (0, 0) }
+
+        var totalIn: UInt64 = 0
+        var totalOut: UInt64 = 0
+
+        for stat in current where !stat.name.hasPrefix("lo") {
+            guard let previous = previous[stat.name] else { continue }
+
+            let deltaIn = Self.byteDelta(current: stat.bytesIn, previous: previous.bytesIn)
+            let deltaOut = Self.byteDelta(current: stat.bytesOut, previous: previous.bytesOut)
+            totalIn += Self.rate(deltaBytes: deltaIn, elapsed: elapsed)
+            totalOut += Self.rate(deltaBytes: deltaOut, elapsed: elapsed)
+        }
+
+        return (totalIn, totalOut)
     }
 
     func parseNettopOutput(_ output: String) -> [String: (bytesIn: UInt64, bytesOut: UInt64, pid: Int32)] {
@@ -191,5 +226,37 @@ actor NetworkMonitor {
         }
 
         return result
+    }
+
+    nonisolated static func byteDelta(current: UInt64, previous: UInt64) -> UInt64 {
+        if current >= previous { return current - previous }
+        if previous <= UInt64(UInt32.max), current <= UInt64(UInt32.max) {
+            return (UInt64(1) << 32) - previous + current
+        }
+        return current
+    }
+
+    nonisolated static func rate(deltaBytes: UInt64, elapsed: TimeInterval) -> UInt64 {
+        guard elapsed > 0 else { return 0 }
+        return UInt64(Double(deltaBytes) / elapsed)
+    }
+
+    nonisolated static func nextRateTimestamp(
+        previous: Date?,
+        sampleSucceeded: Bool,
+        now: Date
+    ) -> Date? {
+        sampleSucceeded ? now : previous
+    }
+
+    nonisolated static func shouldRefreshProcesses(
+        now: Date,
+        last: Date?,
+        interval: TimeInterval,
+        inFlight: Bool
+    ) -> Bool {
+        if inFlight { return false }
+        if let last, now.timeIntervalSince(last) < interval { return false }
+        return true
     }
 }
