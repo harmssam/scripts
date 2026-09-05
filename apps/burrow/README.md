@@ -1,12 +1,12 @@
 # Burrow
 
-Working-name native macOS maintenance interface inspired by the calm, atmospheric presentation of Mole for Mac. Status and Analyze use the installed Mole CLI through a typed adapter. Clean, Apps, and Optimize expose immutable previews and an in-memory execution demo; no cleanup, optimization, or uninstall execution path exists.
+Working-name native macOS maintenance interface inspired by the calm, atmospheric presentation of Mole for Mac. Status and Analyze use the installed Mole CLI through a typed adapter. Clean, Apps, and Optimize expose immutable previews and a labeled in-memory execution demo. There is no Mole cleanup, optimize, or uninstall execute path (`LiveMaintenanceSheet` is gone).
 
 ## Current behavior
 
 - Burrow discovers `mo` in the signed app bundle, `/opt/homebrew/bin`, or `/usr/local/bin`.
-- Status refreshes from `mo status --json` through one shared application state.
-- Analyze can scan a user-selected directory with `mo analyze --json`.
+- Status and the menu bar refresh from `mo status --json` through one shared application state. The CPU badge uses `thermal.cpuTemp`. Network uses live rx/tx rates.
+- Analyze can scan a user-selected directory with `mo analyze --json`. Move to Trash uses `FileManager.trashItem` in the user context after confirmation.
 - Missing/incompatible engines fall back to clearly marked demo data.
 - Full Disk Access is reported separately from engine availability.
 - The process runner launches `mo` directly with argument arrays and a scrubbed environment; it never constructs shell command strings.
@@ -14,14 +14,18 @@ Working-name native macOS maintenance interface inspired by the calm, atmospheri
 - Upstream Clean dry-run refreshes its own `~/.config/mole/clean-list.txt` preview manifest. Burrow therefore promises “no cleanup performed,” rather than claiming the preview process performs no writes at all.
 - Mole 1.53 text is isolated in a strict versioned compatibility adapter. Missing dry-run/no-change markers fail closed.
 - Every preview is a schema-versioned immutable value with a deterministic SHA-256 fingerprint, engine version, source, and warnings.
-- UI badges distinguish live engine previews from demo fallback. Selection review is also fingerprinted.
-- Execution contracts bind exact actions, stable identities, allowed roots, plan fingerprints, confirmation expiry, and strictly validated progress events.
-- Clean, Optimize, and Apps can run a prominently labeled in-memory demo scenario with live progress, deterministic cancellation, and a privacy-safe receipt. It cannot access the filesystem.
-- The production privileged transport remains disabled. The helper authorization code is a testable boundary only: no XPC service, helper installation, or filesystem executor is connected.
-- Local receipt storage requires explicit demo/authenticated-helper provenance, validates semantic consistency, uses private permissions, and is not yet wired into production execution.
-- No clean, optimize, or uninstall execution method exists in the engine protocol.
+- UI badges distinguish live engine previews (`LIVE PREVIEW`) from demo fallback (`UNAVAILABLE`).
+- Clean, Optimize, and Apps “run” opens labeled `ExecutionFlowSheet` and uses `InMemoryPrivilegedOperationTransport`. It cannot access the filesystem.
+- Production default transport is `DisabledPrivilegedOperationTransport`. Helper authorization is a testable boundary only: no XPC service, helper installation, or SMJobBless.
+- `FixtureRootOperationTransport` exists for tests only (`openat` / `O_NOFOLLOW` / `unlinkat` under an injected root). It is not wired into `AppState`.
+- Demo receipts persist locally under Application Support `Burrow/receipts` with `fixtureSimulation` provenance. The Clean footer reads that history.
+- `executionPlan` is gated on `burrow-plan-v1` in `mo --version` and is unused by the UI.
+- No `executeClean` / `executeOptimize` / `executeUninstall` methods exist.
+- Apps Updates and Startup are not implemented.
 
 The compatibility adapter intentionally supports Mole 1.53.x only. A different version falls back to demo data until its output has golden fixtures and a reviewed adapter. Apps provides real inventory evidence, but related-file enumeration remains unavailable until upstream exposes a non-interactive structured uninstall plan.
+
+See [docs/engine-contract.md](docs/engine-contract.md) and [docs/safety-model.md](docs/safety-model.md).
 
 ## Run
 

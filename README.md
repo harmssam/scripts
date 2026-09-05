@@ -24,7 +24,7 @@ scripts/    # Utility scripts and small automation tools
 |-----|-------------|--------|----------|
 | [Pulse](apps/pulse/) | Real-time network, disk, CPU, GPU, temperature, and fan monitor for the menu bar | **0.3.1** | [Download](https://github.com/harmssam/workbench/releases/latest) |
 | [Harmless Budget](apps/harmless-budget/) | Local-only zero-based budgeting — CSV import, rules, analytics | **0.1.0** | [Download](https://github.com/harmssam/workbench/releases) |
-| [Burrow](apps/burrow/) | Atmospheric native UI for cleanup, apps, optimization, disk analysis, and status | **Prototype** | Local build only |
+| [Burrow](apps/burrow/) | Native maintenance UI prototype (safe demo mode) | **Prototype** | Local build only |
 
 ### Pulse
 

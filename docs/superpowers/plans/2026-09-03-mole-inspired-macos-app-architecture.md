@@ -1,6 +1,6 @@
 # Mole-Inspired macOS App Architecture
 
-**Status:** Phase 4 safety foundation implemented; privileged/destructive execution remains disabled  
+**Status:** Prototype in safe demo mode. Status/Analyze are live; Clean/Optimize/Apps are dry-run preview plus labeled in-memory demo; production privileged transport is disabled; Phase 6 is still deferred  
 **Platform:** macOS 14+, Apple Silicon first  
 **Working location:** `apps/burrow/`  
 **Working title:** Burrow (rename before release if brand review requires it)
@@ -261,11 +261,21 @@ The first milestone can ship read-only Status and Analyze without a helper. Do n
 - Added action-specific, path-level schema-one execution contracts with stable file identities, canonical cross-language fingerprints, empty-only directory removal, replacement source/postcondition hashes, narrow per-action roots, overlap rejection, and strict started-to-terminal progress validation.
 - Added plan-derived confirmation, cancellation, timeout, progress, bounded privacy-safe receipts, and review-to-receipt presentation. The only runnable flow is prominently labeled as an in-memory demo scenario; the production transport still fails closed.
 - Added a helper authorization boundary with injected audit-token/client authentication and user-authorization verification, helper-issued short-lived single-use tickets, trusted UID/home binding, bounded replay state, and opaque descriptor-style action handles. It is not connected to XPC or a filesystem executor.
-- Added schema-versioned local receipt storage with mandatory demo-versus-authenticated-helper provenance, semantic invariant checks, private permissions, no-follow containment checks, and bounded privacy-safe corruption handling. Persistence is not yet wired to production execution.
+- Added schema-versioned local receipt storage with mandatory demo-versus-authenticated-helper provenance, semantic invariant checks, private permissions, no-follow containment checks, and bounded privacy-safe corruption handling. Demo runs persist `fixtureSimulation` receipts under Application Support `Burrow/receipts`; authenticated-helper provenance is not produced by the UI.
 - Hardened distribution around a pinned Mole 1.53.0 source/binary release: immutable archive verification, explicit inner-to-outer signing, atomic bundle replacement, signed native launcher, CI toolchain pinning, and release verification hooks.
 - Current automated gate: 67 tests across 9 suites, repeated cleanly; release build and ad-hoc signed bundle with the pinned engine verify successfully.
 
 Remaining Phase 4 work is intentionally blocked from production until a separately signed XPC helper and descriptor-relative executor exist, are authenticated with real macOS audit-token/Authorization Services adapters, and pass destructive tests exclusively inside disposable fixtures/VMs.
+
+### Current implementation (2026-09-04)
+
+- `LiveMaintenanceSheet` is deleted. No `executeClean` / `executeOptimize` / `executeUninstall`.
+- Clean/Optimize/Apps “run” opens labeled `ExecutionFlowSheet` with `InMemoryPrivilegedOperationTransport`.
+- Production default is `DisabledPrivilegedOperationTransport`. `FixtureRootOperationTransport` is tests-only and not wired into `AppState`.
+- Status/Analyze/menu bar use live `mo status --json` / `mo analyze --json`. CPU badge uses `thermal.cpuTemp`. Network uses live rx/tx rates.
+- Analyze Move to Trash uses confirmed `FileManager.trashItem` in the user context.
+- Helper authorization remains a testable boundary. No XPC / `SMJobBless` install.
+- `engine-contract.md` and `safety-model.md` live under `apps/burrow/docs/`.
 
 ## 10. Feature modules
 
@@ -423,10 +433,11 @@ Do not persist raw live metrics or a catalog of the user's filesystem by default
 
 **Exit:** signed beta with documented limitations and recovery path.
 
-### Phase 6 — differentiated utilities
+### Phase 6 — differentiated utilities (still deferred)
 
 - Evaluate Updates, Startup Items, Battery Care, privacy activity, fan controls, Keep Screen On, and Clean Screen as independent proposals.
 - Each feature needs its own safety/privacy model; none should be inferred as part of the CLI wrapper.
+- Apps Updates and Startup remain unimplemented. Do not treat them as in-scope for the current prototype.
 
 ## 16. Architecture decisions to hold
 
@@ -440,4 +451,4 @@ Do not persist raw live metrics or a catalog of the user's filesystem by default
 
 ## 17. Immediate next implementation task
 
-Create `apps/<product-name>/` with the Xcode shell, local packages, semantic design tokens, capsule navigation, and fixture-backed implementations of the five screens. Keep all destructive controls in demo mode until the structured engine plan protocol is complete.
+Move the prototype into an Xcode app project with a signed helper target, Developer ID signing, and a Mole structured plan JSON protocol that advertises `burrow-plan-v1`. Until those three exist, keep production transport disabled, keep `FixtureRootOperationTransport` tests-only, never install XPC/`SMJobBless`, and never launch `mo clean` / `mo optimize` / `mo uninstall` without `--dry-run` / `--list`. Phase 6 remains deferred.
