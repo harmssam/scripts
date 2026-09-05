@@ -3,6 +3,7 @@ import SwiftUI
 struct CleanView: View {
     @Environment(AppState.self) private var appState
     @State private var showingRun = false
+    @State private var executionModel: ExecutionPresentationModel?
     private let atmosphere = FeatureAtmosphere.clean
 
     var body: some View {
@@ -43,10 +44,13 @@ struct CleanView: View {
         .padding(.horizontal, 38)
         .animation(.easeInOut(duration: 0.24), value: appState.cleanPhase)
         .sheet(isPresented: $showingRun) {
-            LiveMaintenanceSheet(
-                title: "Clean this Mac", detail: "Mole will remove the items represented by the latest dry-run preview.",
-                requiredPhrase: "CLEAN", accent: atmosphere.accent
-            ) { try await appState.executeClean() }
+            if let executionModel, let plan = appState.cleanPlan {
+                ExecutionFlowSheet(
+                    model: executionModel,
+                    currentPreviewFingerprint: plan.metadata.fingerprint,
+                    accent: atmosphere.accent
+                )
+            }
         }
     }
 
@@ -110,9 +114,13 @@ struct CleanView: View {
                 }
                 Spacer()
                 Button("Close preview") { appState.cleanPhase = .complete }.buttonStyle(.plain)
-                Button("Clean now") { showingRun = true }
+                Button("Clean now") {
+                    guard let model = appState.cleanExecution else { return }
+                    executionModel = model
+                    showingRun = true
+                }
                     .buttonStyle(PrimaryCapsuleButtonStyle(accent: atmosphere.accent))
-                    .disabled(appState.cleanPlan?.metadata.source != .moleCompatibilityAdapter)
+                    .disabled(appState.cleanExecution == nil)
             }
             .padding(14)
         }

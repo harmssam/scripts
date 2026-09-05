@@ -7,9 +7,6 @@ protocol EngineClientProtocol: Sendable {
     func cleanPreview() async throws -> CleanPreviewPlan
     func optimizePreview() async throws -> OptimizePreviewPlan
     func uninstallInventory() async throws -> UninstallPreviewPlan
-    func executeClean() async throws -> String
-    func executeOptimize() async throws -> String
-    func executeUninstall(names: [String]) async throws -> String
     func executionPlanCapabilities() async -> ExecutionPlanCapabilities
     func executionPlan(for request: ExecutionPlanRequest) async throws -> ExecutionPlan
 }
@@ -74,23 +71,6 @@ actor MoleEngineClient: EngineClientProtocol {
         // Mole 1.53 emits JSON automatically when --list stdout is a pipe. It rejects --list --json.
         let output = try await run(arguments: ["uninstall", "--list"])
         return try MolePreviewAdapter_v1_53.applications(output: output, engineVersion: version)
-    }
-
-    func executeClean() async throws -> String {
-        try await run(arguments: ["clean"])
-    }
-
-    func executeOptimize() async throws -> String {
-        try await run(arguments: ["optimize"])
-    }
-
-    func executeUninstall(names: [String]) async throws -> String {
-        guard !names.isEmpty else { throw EngineError.invalidRequest("Select at least one application") }
-        guard names.allSatisfy({ !$0.isEmpty && !$0.hasPrefix("-") && !$0.contains("\n") && !$0.contains("\0") }) else {
-            throw EngineError.invalidRequest("Invalid application name")
-        }
-        // Mole treats these as app-name operands and moves files to Trash by default.
-        return try await run(arguments: ["uninstall", "--"] + names, standardInput: "y\n")
     }
 
     func executionPlanCapabilities() async -> ExecutionPlanCapabilities {
@@ -191,13 +171,13 @@ actor MoleEngineClient: EngineClientProtocol {
         return version
     }
 
-    private func run(arguments: [String], standardInput: String? = nil) async throws -> String {
-        let result = try await runResult(arguments: arguments, standardInput: standardInput)
+    private func run(arguments: [String]) async throws -> String {
+        let result = try await runResult(arguments: arguments)
         guard result.status == 0 else { throw EngineError.commandFailed(result.status, result.stderr) }
         return result.stdout
     }
 
-    private func runResult(arguments: [String], standardInput: String? = nil) async throws -> (status: Int32, stdout: String, stderr: String) {
+    private func runResult(arguments: [String]) async throws -> (status: Int32, stdout: String, stderr: String) {
         guard let executableURL else { throw EngineError.unavailable }
 
         return try await withCheckedThrowingContinuation { continuation in
@@ -208,12 +188,6 @@ actor MoleEngineClient: EngineClientProtocol {
             process.arguments = arguments
             process.standardOutput = stdout
             process.standardError = stderr
-            if let standardInput {
-                let input = Pipe()
-                process.standardInput = input
-                input.fileHandleForWriting.write(Data(standardInput.utf8))
-                try? input.fileHandleForWriting.close()
-            }
             process.environment = Self.safeEnvironment()
 
             let outputBuffer = ProcessOutputBuffer()

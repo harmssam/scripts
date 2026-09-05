@@ -3,6 +3,7 @@ import SwiftUI
 struct OptimizeView: View {
     @Environment(AppState.self) private var appState
     @State private var showingRun = false
+    @State private var executionModel: ExecutionPresentationModel?
     private let atmosphere = FeatureAtmosphere.optimize
 
     var body: some View {
@@ -36,6 +37,12 @@ struct OptimizeView: View {
                 }
             }
             .frame(maxWidth: 540, maxHeight: 280).burrowPanel()
+            .overlay {
+                if displayTasks.isEmpty {
+                    Text(appState.optimizeIsLoading ? "Building a safe preview…" : "Awaiting dry-run preview")
+                        .font(BurrowType.data).foregroundStyle(.white.opacity(0.45))
+                }
+            }
 
             if let plan = appState.optimizePlan {
                 Text("\(plan.metadata.source.label) · PLAN \(plan.metadata.fingerprint.prefix(12)) · NO CHANGES MADE")
@@ -53,25 +60,30 @@ struct OptimizeView: View {
                 .buttonStyle(PrimaryCapsuleButtonStyle(accent: atmosphere.accent))
                 .disabled(appState.optimizeIsLoading)
                 if appState.optimizePlan != nil {
-                    Button("Optimize now") { showingRun = true }
+                    Button("Optimize now") {
+                        guard let model = appState.optimizeExecution else { return }
+                        executionModel = model
+                        showingRun = true
+                    }
                         .buttonStyle(PrimaryCapsuleButtonStyle(accent: atmosphere.accent))
-                        .disabled(appState.optimizePlan?.metadata.source != .moleCompatibilityAdapter)
+                        .disabled(appState.optimizeExecution == nil)
                 }
             }
             Spacer(minLength: 12)
         }
         .sheet(isPresented: $showingRun) {
-            LiveMaintenanceSheet(
-                title: "Optimize this Mac", detail: "Mole will apply the maintenance tasks shown in the latest dry-run preview.",
-                requiredPhrase: "OPTIMIZE", accent: atmosphere.accent
-            ) { try await appState.executeOptimize() }
+            if let executionModel, let plan = appState.optimizePlan {
+                ExecutionFlowSheet(
+                    model: executionModel,
+                    currentPreviewFingerprint: plan.metadata.fingerprint,
+                    accent: atmosphere.accent
+                )
+            }
         }
     }
 
     private var displayTasks: [OptimizePreviewPlan.Task] {
-        appState.optimizePlan?.tasks ?? DemoData.optimizeTasks.enumerated().map {
-            .init(id: "placeholder-\($0.offset)", title: $0.element, detail: "Awaiting dry-run preview", disposition: .unchanged)
-        }
+        appState.optimizePlan?.tasks ?? []
     }
 
     private func icon(for disposition: OptimizePreviewPlan.Disposition) -> String {

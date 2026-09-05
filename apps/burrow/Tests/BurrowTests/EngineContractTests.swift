@@ -48,4 +48,29 @@ struct EngineContractTests {
     func byteFormatting() {
         #expect(ByteFormatter.string(Int64(1_024)).contains("KB"))
     }
+
+    @Test("Engine protocol and client have no mutating execute methods")
+    func noMutatingExecuteMethods() throws {
+        let _: any EngineClientProtocol = ReadOnlyEngineClient()
+        let sourceURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/Burrow/EngineClient.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+        #expect(!source.contains("func executeClean("))
+        #expect(!source.contains("func executeOptimize("))
+        #expect(!source.contains("func executeUninstall("))
+    }
+}
+
+private actor ReadOnlyEngineClient: EngineClientProtocol {
+    func availability() async -> EngineAvailability { .unavailable("test") }
+    func statusSnapshot() async throws -> StatusSnapshot { throw EngineError.unavailable }
+    func analyze(path: String) async throws -> AnalyzeReport { throw EngineError.unavailable }
+    func cleanPreview() async throws -> CleanPreviewPlan { throw EngineError.unavailable }
+    func optimizePreview() async throws -> OptimizePreviewPlan { throw EngineError.unavailable }
+    func uninstallInventory() async throws -> UninstallPreviewPlan { throw EngineError.unavailable }
+    func executionPlanCapabilities() async -> ExecutionPlanCapabilities { .unavailable(engineVersion: "test") }
+    func executionPlan(for request: ExecutionPlanRequest) async throws -> ExecutionPlan { throw EngineError.unavailable }
 }

@@ -165,13 +165,6 @@ final class AppState {
         appsExecution = try? FixtureExecutionPresentationFactory.uninstall(selection)
     }
 
-    func executeClean() async throws -> String { try await engine.executeClean() }
-    func executeOptimize() async throws -> String { try await engine.executeOptimize() }
-    func executeSelectedApps() async throws -> String {
-        let names = selectedUninstallPlan.applications.map(\.uninstallName)
-        return try await engine.executeUninstall(names: names)
-    }
-
     func refreshStatus() {
         Task {
             do {

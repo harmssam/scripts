@@ -6,6 +6,7 @@ struct AppsView: View {
     @State private var query = ""
     @State private var subtab = "Uninstall"
     @State private var showingRun = false
+    @State private var executionModel: ExecutionPresentationModel?
     private let atmosphere = FeatureAtmosphere.apps
 
     private var filteredApps: [UninstallPreviewPlan.Application] {
@@ -63,12 +64,17 @@ struct AppsView: View {
             selectionBar
         }
         .padding(.horizontal, 30).padding(.bottom, 24)
+        .onChange(of: appState.selectedAppIDs) { _, _ in
+            appState.prepareAppsExecution()
+        }
         .sheet(isPresented: $showingRun) {
-            LiveMaintenanceSheet(
-                title: "Uninstall selected apps",
-                detail: "Mole will uninstall \(appState.selectedAppIDs.count) selected app(s) and move their files to Trash.",
-                requiredPhrase: "UNINSTALL", accent: atmosphere.accent
-            ) { try await appState.executeSelectedApps() }
+            if let executionModel {
+                ExecutionFlowSheet(
+                    model: executionModel,
+                    currentPreviewFingerprint: appState.selectedUninstallPlan.metadata.fingerprint,
+                    accent: atmosphere.accent
+                )
+            }
         }
     }
 
@@ -141,9 +147,14 @@ struct AppsView: View {
             }
             Spacer()
             Button("Clear") { appState.selectedAppIDs.removeAll() }.buttonStyle(.plain).foregroundStyle(atmosphere.accent)
-            Button("Uninstall") { showingRun = true }
+            Button("Uninstall") {
+                appState.prepareAppsExecution()
+                guard let model = appState.appsExecution else { return }
+                executionModel = model
+                showingRun = true
+            }
                 .buttonStyle(PrimaryCapsuleButtonStyle(accent: atmosphere.accent))
-                .disabled(appState.selectedAppIDs.isEmpty || appState.uninstallPlan.metadata.source != .moleCompatibilityAdapter)
+                .disabled(appState.selectedAppIDs.isEmpty || appState.appsExecution == nil)
         }
         .padding(.leading, 12)
     }
