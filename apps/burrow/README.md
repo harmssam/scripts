@@ -5,9 +5,9 @@ Working-name native macOS maintenance interface inspired by the calm, atmospheri
 ## Current behavior
 
 - Burrow discovers `mo` in the signed app bundle, `/opt/homebrew/bin`, or `/usr/local/bin`.
-- Status and the menu bar refresh from `mo status --json` through one shared application state. The CPU badge uses `thermal.cpuTemp`. Network uses live rx/tx rates.
+- Status and the menu bar refresh from `mo status --json` through one shared application state. Status CPU badge uses `thermal.cpuTemp`. Network uses live rx/tx rates.
 - Analyze can scan a user-selected directory with `mo analyze --json`. Move to Trash uses `FileManager.trashItem` in the user context after confirmation.
-- Missing/incompatible engines fall back to clearly marked demo data.
+- Missing or incompatible engines fail closed for Status, Analyze, Clean, and Optimize (error, no plan/snapshot). Apps inventory uses `PreviewFallbacks.apps`.
 - Full Disk Access is reported separately from engine availability.
 - The process runner launches `mo` directly with argument arrays and a scrubbed environment; it never constructs shell command strings.
 - Clean calls only `mo clean --dry-run`; Optimize calls only `mo optimize --dry-run`; Apps calls only `mo uninstall --list` (Mole 1.53 emits JSON when piped).
@@ -16,14 +16,14 @@ Working-name native macOS maintenance interface inspired by the calm, atmospheri
 - Every preview is a schema-versioned immutable value with a deterministic SHA-256 fingerprint, engine version, source, and warnings.
 - UI badges distinguish live engine previews (`LIVE PREVIEW`) from demo fallback (`UNAVAILABLE`).
 - Clean, Optimize, and Apps “run” opens labeled `ExecutionFlowSheet` and uses `InMemoryPrivilegedOperationTransport`. It cannot access the filesystem.
-- Production default transport is `DisabledPrivilegedOperationTransport`. Helper authorization is a testable boundary only: no XPC service, helper installation, or SMJobBless.
+- `DisabledPrivilegedOperationTransport` is the fail-closed type and is unused by the shipping run path. Helper authorization is a testable boundary only: no XPC service, helper installation, or SMJobBless.
 - `FixtureRootOperationTransport` exists for tests only (`openat` / `O_NOFOLLOW` / `unlinkat` under an injected root). It is not wired into `AppState`.
 - Demo receipts persist locally under Application Support `Burrow/receipts` with `fixtureSimulation` provenance. The Clean footer reads that history.
 - `executionPlan` is gated on `burrow-plan-v1` in `mo --version` and is unused by the UI.
 - No `executeClean` / `executeOptimize` / `executeUninstall` methods exist.
 - Apps Updates and Startup are not implemented.
 
-The compatibility adapter intentionally supports Mole 1.53.x only. A different version falls back to demo data until its output has golden fixtures and a reviewed adapter. Apps provides real inventory evidence, but related-file enumeration remains unavailable until upstream exposes a non-interactive structured uninstall plan.
+The compatibility adapter intentionally supports Mole 1.53.x only. A different version throws `incompatibleVersion`; Clean/Optimize do not load demo fallbacks. Apps provides real inventory evidence, but related-file enumeration remains unavailable until upstream exposes a non-interactive structured uninstall plan.
 
 See [docs/engine-contract.md](docs/engine-contract.md) and [docs/safety-model.md](docs/safety-model.md).
 

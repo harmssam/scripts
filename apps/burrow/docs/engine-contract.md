@@ -2,7 +2,7 @@
 
 Burrow talks to a pinned Mole 1.53 CLI through `MoleEngineClient`. The process runner launches `mo` with an argument array and a scrubbed environment. It never builds a shell command string.
 
-The compatibility adapter is `MolePreviewAdapter_v1_53` (`supportedVersionMarker`: `Mole version 1.53.`). Other versions fail closed to demo fallback.
+The compatibility adapter is `MolePreviewAdapter_v1_53` (`supportedVersionMarker`: `Mole version 1.53.`). Other versions throw `incompatibleVersion`. Clean and Optimize previews fail closed (error, `nil` plan). Status and Analyze fail closed (error, no snapshot/report). Apps inventory uses `PreviewFallbacks.apps`.
 
 ## Commands Burrow actually runs
 

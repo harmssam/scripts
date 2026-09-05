@@ -1,6 +1,6 @@
 # Mole-Inspired macOS App Architecture
 
-**Status:** Prototype in safe demo mode. Status/Analyze are live; Clean/Optimize/Apps are dry-run preview plus labeled in-memory demo; production privileged transport is disabled; Phase 6 is still deferred  
+**Status:** Prototype in safe demo mode. Status is a live `mo status --json` read. Analyze is a live `mo analyze --json` read plus confirmed user-context `trashItem`. Clean/Optimize/Apps are dry-run preview plus labeled in-memory demo; fail-closed privileged transport is unused by shipping; Phase 6 is still deferred  
 **Platform:** macOS 14+, Apple Silicon first  
 **Working location:** `apps/burrow/`  
 **Working title:** Burrow (rename before release if brand review requires it)
@@ -263,7 +263,7 @@ The first milestone can ship read-only Status and Analyze without a helper. Do n
 - Added a helper authorization boundary with injected audit-token/client authentication and user-authorization verification, helper-issued short-lived single-use tickets, trusted UID/home binding, bounded replay state, and opaque descriptor-style action handles. It is not connected to XPC or a filesystem executor.
 - Added schema-versioned local receipt storage with mandatory demo-versus-authenticated-helper provenance, semantic invariant checks, private permissions, no-follow containment checks, and bounded privacy-safe corruption handling. Demo runs persist `fixtureSimulation` receipts under Application Support `Burrow/receipts`; authenticated-helper provenance is not produced by the UI.
 - Hardened distribution around a pinned Mole 1.53.0 source/binary release: immutable archive verification, explicit inner-to-outer signing, atomic bundle replacement, signed native launcher, CI toolchain pinning, and release verification hooks.
-- Current automated gate: 67 tests across 9 suites, repeated cleanly; release build and ad-hoc signed bundle with the pinned engine verify successfully.
+- Automated tests cover engine contracts, demo execution, receipts, helper authorization, and the tests-only fixture-root transport; release build and ad-hoc signed bundle with the pinned engine verify successfully.
 
 Remaining Phase 4 work is intentionally blocked from production until a separately signed XPC helper and descriptor-relative executor exist, are authenticated with real macOS audit-token/Authorization Services adapters, and pass destructive tests exclusively inside disposable fixtures/VMs.
 
@@ -271,8 +271,8 @@ Remaining Phase 4 work is intentionally blocked from production until a separate
 
 - `LiveMaintenanceSheet` is deleted. No `executeClean` / `executeOptimize` / `executeUninstall`.
 - Clean/Optimize/Apps “run” opens labeled `ExecutionFlowSheet` with `InMemoryPrivilegedOperationTransport`.
-- Production default is `DisabledPrivilegedOperationTransport`. `FixtureRootOperationTransport` is tests-only and not wired into `AppState`.
-- Status/Analyze/menu bar use live `mo status --json` / `mo analyze --json`. CPU badge uses `thermal.cpuTemp`. Network uses live rx/tx rates.
+- `DisabledPrivilegedOperationTransport` exists and is unused by the shipping run path. `FixtureRootOperationTransport` is tests-only and not wired into `AppState`.
+- Status and the menu bar use live `mo status --json`. Status CPU badge uses `thermal.cpuTemp`. Analyze uses live `mo analyze --json`. Network uses live rx/tx rates.
 - Analyze Move to Trash uses confirmed `FileManager.trashItem` in the user context.
 - Helper authorization remains a testable boundary. No XPC / `SMJobBless` install.
 - `engine-contract.md` and `safety-model.md` live under `apps/burrow/docs/`.
@@ -422,7 +422,8 @@ Do not persist raw live metrics or a catalog of the user's filesystem by default
 ### Phase 4 — safe execution
 
 - Implement the signed privilege helper and XPC allowlist.
-- Enable Clean, Optimize, Uninstall, Analyze-to-Trash, receipts, cancellation, and recovery.
+- Enable Clean, Optimize, Uninstall, receipts, cancellation, and recovery.
+- Analyze-to-Trash is already implemented as confirmed user-context `FileManager.trashItem` (see Current implementation).
 
 **Exit:** every mutation is previewable, confirmed, plan-bound, logged, tested in fixtures, and revalidated at the action boundary.
 
