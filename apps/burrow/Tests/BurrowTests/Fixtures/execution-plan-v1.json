@@ -1,0 +1,24 @@
+{
+  "metadata": {
+    "schemaVersion": 1,
+    "engineVersion": "Mole version 2.0.0-protocol.1",
+    "createdAt": "2026-09-03T21:40:00Z",
+    "expiresAt": "2026-09-03T21:50:00Z",
+    "fingerprint": "d1bf154ca6d75e990179d49a124526f668cbbf0f6d99aaab568a2cdaefd8bdbb"
+  },
+  "kind": "clean",
+  "operations": [
+    {
+      "id": "clean.cache.example",
+      "action": "removeFile",
+      "target": {
+        "path": "/Users/test/Library/Caches/example.cache",
+        "nodeKind": "file",
+        "byteCount": 4096,
+        "modificationTime": "2026-09-03T21:40:00Z",
+        "fileIdentifier": "16777234:9911"
+      },
+      "reason": "Application cache selected by the user"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+[
+  {"name":"Canvas","bundle_id":"com.example.canvas","source":"App","uninstall_name":"Canvas","path":"/Applications/Canvas.app","size":"1.2GB"},
+  {"name":"Tiny Tool","bundle_id":"unknown","source":"Homebrew","uninstall_name":"tiny-tool","path":"/Applications/Tiny Tool.app","size":"--"}
+]

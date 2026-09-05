@@ -1,0 +1,11 @@
+Clean Your Mac
+Dry Run Mode, Preview only, no deletions
+➤ User essentials
+  → User app cache · 9 items, 1.56GB dry
+  → User app logs · 4 items, 18KB dry
+➤ Browsers
+  → Brave cache · 1.52GB dry
+======================================================================
+Dry run complete - no changes made
+Potential space: 3.08GB | Items: 13 | Categories: 2
+======================================================================

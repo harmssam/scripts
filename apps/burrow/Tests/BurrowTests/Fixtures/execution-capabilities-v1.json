@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "engineVersion": "Mole version 2.0.0-protocol.1",
+  "supportedPlanKinds": ["clean", "optimize", "uninstall"],
+  "progressEventSchemaVersion": 1
+}

@@ -33,6 +33,7 @@ target/
 
 # Swift / Xcode
 .build/
+.artifacts/
 apps/pulse/dist/
 apps/pulse/build/
 apps/harmless-budget/release/

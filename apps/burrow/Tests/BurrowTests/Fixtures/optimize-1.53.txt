@@ -1,0 +1,13 @@
+Optimize
+→ DRY RUN MODE, No files will be modified
+➤ DNS & Spotlight Check
+  → DNS cache flushed
+➤ Database Optimization
+  ◎ Close Safari before database optimization
+➤ Login Items
+  ✓ Login items all healthy
+======================================================================
+Dry Run Complete, No Changes Made
+Would apply 1 optimizations
+1 unchanged | 1 skipped
+======================================================================
