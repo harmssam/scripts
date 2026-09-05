@@ -18,7 +18,7 @@ struct MenuBarDashboard: View {
             }
             Divider()
             VStack(spacing: 7) {
-                menuRow("Network", "↓ 8 · ↑ 3 KB/s")
+                menuRow("Network", snapshot?.network.first.map { "↓ \(StatusMetricsFormatting.rate($0.receiveMBs)) · ↑ \(StatusMetricsFormatting.rate($0.transmitMBs))" } ?? "—")
                 menuRow("Battery", snapshot?.batteries.first.map { "\(Int($0.percent))% · \($0.health.lowercased())" } ?? "—")
                 menuRow("Top process", snapshot?.topProcesses.first.map { "\($0.name) · \(Int($0.cpu))%" } ?? "—")
             }

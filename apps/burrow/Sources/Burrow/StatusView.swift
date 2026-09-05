@@ -7,7 +7,14 @@ struct StatusView: View {
         VStack(spacing: 12) {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
                 HealthCard(snapshot: appState.statusSnapshot)
-                ForEach(statusMetrics) { metric in MetricCard(metric: metric) }
+                ForEach(statusMetrics) { metric in
+                    MetricCard(
+                        metric: metric,
+                        badge: metric.name == "CPU"
+                            ? StatusMetricsFormatting.cpuBadge(celsius: appState.statusSnapshot?.thermal.cpuTemp)
+                            : "LIVE"
+                    )
+                }
             }
             if let error = appState.statusError {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
@@ -27,13 +34,19 @@ struct StatusView: View {
             DemoMetric(name: "CPU", value: "\(Int(snapshot.cpu.usage.rounded()))%", detail: "\(snapshot.cpu.coreCount) cores", symbol: "cpu", tintHex: 0x63D6A4, samples: appState.statusHistory["cpu"] ?? [snapshot.cpu.usage]),
             DemoMetric(name: "Memory", value: "\(Int(snapshot.memory.usedPercent.rounded()))%", detail: "\(ByteFormatter.string(snapshot.memory.used)) · \(ByteFormatter.string(snapshot.memory.swapUsed)) swap", symbol: "memorychip", tintHex: 0xE6D27A, samples: appState.statusHistory["memory"] ?? [snapshot.memory.usedPercent]),
             DemoMetric(name: "Disk", value: disk.map { ByteFormatter.string($0.total - $0.used) } ?? "—", detail: disk.map { "free · \(Int($0.usedPercent.rounded()))% used" } ?? "Unavailable", symbol: "internaldrive", tintHex: 0x7DAAF2, samples: [disk?.usedPercent ?? 0]),
-            DemoMetric(name: "Network", value: network.map { Self.rate($0.receiveMBs + $0.transmitMBs) } ?? "—", detail: network.map { "\($0.name) · live" } ?? "Unavailable", symbol: "network", tintHex: 0x60B8E8, samples: appState.statusHistory["network"] ?? [0]),
+            DemoMetric(name: "Network", value: network.map { StatusMetricsFormatting.rate($0.receiveMBs + $0.transmitMBs) } ?? "—", detail: network.map { "\($0.name) · live" } ?? "Unavailable", symbol: "network", tintHex: 0x60B8E8, samples: appState.statusHistory["network"] ?? [0]),
             DemoMetric(name: "Battery", value: battery.map { "\(Int($0.percent))%" } ?? "—", detail: battery.map { "\($0.health) · \($0.status)" } ?? "No battery", symbol: "battery.100percent", tintHex: 0x5FD49A, samples: [battery?.percent ?? 0])
         ]
     }
+}
 
-    private static func rate(_ megabytes: Double) -> String {
+enum StatusMetricsFormatting {
+    static func rate(_ megabytes: Double) -> String {
         megabytes < 1 ? "\(Int((megabytes * 1024).rounded())) KB/s" : String(format: "%.1f MB/s", megabytes)
+    }
+
+    static func cpuBadge(celsius: Double?) -> String {
+        celsius.map { "\(Int($0.rounded()))°C" } ?? "LIVE"
     }
 }
 
@@ -61,6 +74,7 @@ struct HealthCard: View {
 
 struct MetricCard: View {
     let metric: DemoMetric
+    let badge: String
     private var tint: Color { Color(hex: metric.tintHex) }
 
     var body: some View {
@@ -68,7 +82,7 @@ struct MetricCard: View {
             HStack {
                 Label(metric.name.uppercased(), systemImage: metric.symbol).font(BurrowType.label).foregroundStyle(tint)
                 Spacer()
-                Text(metric.name == "CPU" ? "44°C" : "LIVE").font(BurrowType.label).foregroundStyle(tint.opacity(0.75))
+                Text(badge).font(BurrowType.label).foregroundStyle(tint.opacity(0.75))
                     .padding(.horizontal, 6).padding(.vertical, 3).background(tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 4))
             }
             Text(metric.value).font(BurrowType.metric)
