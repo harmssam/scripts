@@ -12,7 +12,6 @@ struct StoredOperationReceipt: Equatable, Sendable {
     let provenance: OperationReceiptProvenance
 }
 
-/// Intentionally remains unwired from the execution coordinator.
 protocol OperationReceiptStoring: Sendable {
     func save(_ receipt: OperationReceipt, provenance: OperationReceiptProvenance) async throws
     func receipts() async throws -> [StoredOperationReceipt]

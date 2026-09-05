@@ -59,14 +59,21 @@ final class AppState {
     var appsAreLoading = false
     var appsError: String?
     var appsExecution: ExecutionPresentationModel?
+    private(set) var storedReceipts: [StoredOperationReceipt] = []
 
     private let engine: any EngineClientProtocol
+    private let receiptStore: any OperationReceiptStoring
+    private var persistedReceiptIDs: Set<UUID> = []
     private var statusTask: Task<Void, Never>?
     private var analyzeTask: Task<Void, Never>?
     private var didStartServices = false
 
-    init(engine: any EngineClientProtocol = MoleEngineClient()) {
+    init(
+        engine: any EngineClientProtocol = MoleEngineClient(),
+        receiptStore: any OperationReceiptStoring = AppState.makeDefaultReceiptStore()
+    ) {
         self.engine = engine
+        self.receiptStore = receiptStore
         theme = UserDefaults.standard.string(forKey: "appearanceThemeV2")
             .flatMap(AppTheme.init(rawValue:)) ?? .woodland
         if let sectionArgument = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--section=") }),
@@ -74,6 +81,10 @@ final class AppState {
         {
             selection = requested
         }
+    }
+
+    var cleanFooter: CleanFooterMetrics {
+        CleanFooterMetrics(receipts: storedReceipts)
     }
 
     var atmosphere: FeatureAtmosphere {
@@ -99,7 +110,7 @@ final class AppState {
                 cleanError = error.localizedDescription
                 cleanPlan = nil
             }
-            cleanExecution = cleanPlan.flatMap { try? FixtureExecutionPresentationFactory.clean($0) }
+            cleanExecution = cleanPlan.flatMap { try? FixtureExecutionPresentationFactory.clean($0, persistReceipt: fixtureReceiptPersister()) }
             cleanPhase = .review
         }
     }
@@ -115,7 +126,7 @@ final class AppState {
                 optimizeError = error.localizedDescription
                 optimizePlan = nil
             }
-            optimizeExecution = optimizePlan.flatMap { try? FixtureExecutionPresentationFactory.optimize($0) }
+            optimizeExecution = optimizePlan.flatMap { try? FixtureExecutionPresentationFactory.optimize($0, persistReceipt: fixtureReceiptPersister()) }
             optimizeIsLoading = false
         }
     }
@@ -124,6 +135,7 @@ final class AppState {
         guard !didStartServices else { return }
         didStartServices = true
         diskAccess = DiskAccessChecker.currentLevel()
+        Task { await loadStoredReceipts() }
         statusTask = Task {
             engineAvailability = await engine.availability()
             guard case .available = engineAvailability else { return }
@@ -162,7 +174,7 @@ final class AppState {
 
     func prepareAppsExecution() {
         let selection = selectedUninstallPlan
-        appsExecution = try? FixtureExecutionPresentationFactory.uninstall(selection)
+        appsExecution = try? FixtureExecutionPresentationFactory.uninstall(selection, persistReceipt: fixtureReceiptPersister())
     }
 
     func refreshStatus() {
@@ -215,10 +227,72 @@ final class AppState {
         scan(directory: URL(fileURLWithPath: report.path))
     }
 
+    func persistDemoReceipt(_ receipt: OperationReceipt) async {
+        guard persistedReceiptIDs.insert(receipt.id).inserted else { return }
+        do {
+            try await receiptStore.save(receipt, provenance: .fixtureSimulation)
+            await loadStoredReceipts()
+        } catch {
+            persistedReceiptIDs.remove(receipt.id)
+        }
+    }
+
+    func loadStoredReceipts() async {
+        do {
+            storedReceipts = try await receiptStore.receipts()
+            persistedReceiptIDs.formUnion(storedReceipts.map(\.receipt.id))
+        } catch {
+            storedReceipts = []
+        }
+    }
+
+    private func fixtureReceiptPersister() -> (@MainActor (OperationReceipt) async -> Void) {
+        { [weak self] receipt in
+            await self?.persistDemoReceipt(receipt)
+        }
+    }
+
+    private static func makeDefaultReceiptStore() -> any OperationReceiptStoring {
+        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Burrow", isDirectory: true)
+            .appendingPathComponent("receipts", isDirectory: true)
+        return try! FileOperationReceiptStore(directoryURL: directory)
+    }
+
     private func appendHistory(_ key: String, _ value: Double) {
         var values = statusHistory[key, default: []]
         values.append(value)
         statusHistory[key] = Array(values.suffix(24))
+    }
+}
+
+struct CleanFooterMetrics: Equatable {
+    let lastClean: String
+    let lifetimeReclaimed: String
+    let protectedPaths: String
+    let isDemoHistory: Bool
+
+    init(receipts: [StoredOperationReceipt], now: Date = Date()) {
+        let latest = receipts.max { lhs, rhs in
+            if lhs.receipt.finishedAt == rhs.receipt.finishedAt {
+                return lhs.receipt.id.uuidString < rhs.receipt.id.uuidString
+            }
+            return lhs.receipt.finishedAt < rhs.receipt.finishedAt
+        }
+        lastClean = latest.map { Self.relativeTime($0.receipt.finishedAt, now: now) } ?? "—"
+        let total = receipts.reduce(Int64(0)) { partial, stored in
+            guard stored.receipt.outcome == .completed else { return partial }
+            return partial + (stored.receipt.completedBytes ?? 0)
+        }
+        lifetimeReclaimed = total == 0 ? "0 B" : ByteFormatter.string(total)
+        protectedPaths = "—"
+        isDemoHistory = receipts.contains { $0.provenance == .fixtureSimulation }
+    }
+
+    private static func relativeTime(_ date: Date, now: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter.localizedString(for: date, relativeTo: now)
     }
 }
 

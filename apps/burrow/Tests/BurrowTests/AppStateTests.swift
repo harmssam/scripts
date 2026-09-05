@@ -61,6 +61,102 @@ struct AppStateTests {
         #expect(state.optimizeError != nil)
     }
 
+    @Test("Empty receipt history shows truthful Clean footer placeholders")
+    func emptyFooterIsTruthful() async throws {
+        let directory = try temporaryReceiptDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try FileOperationReceiptStore(directoryURL: directory)
+        let state = AppState(engine: PreviewOnlyEngine(), receiptStore: store)
+        await state.loadStoredReceipts()
+
+        #expect(state.cleanFooter.lastClean == "—")
+        #expect(state.cleanFooter.lifetimeReclaimed == "0 B")
+        #expect(state.cleanFooter.protectedPaths == "—")
+        #expect(!state.cleanFooter.isDemoHistory)
+        let source = try String(contentsOf: sourceFile("CleanView.swift"), encoding: .utf8)
+        #expect(!source.contains("8 days ago"))
+        #expect(!source.contains("148.2 GB"))
+        #expect(!source.contains("12 paths"))
+    }
+
+    @Test("Saving a demo receipt drives footer-derived Clean history")
+    func demoReceiptDrivesFooter() async throws {
+        let directory = try temporaryReceiptDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try FileOperationReceiptStore(directoryURL: directory)
+        let state = AppState(engine: PreviewOnlyEngine(), receiptStore: store)
+        let now = Date()
+        let finishedAt = now.addingTimeInterval(-8 * 24 * 60 * 60)
+        let receipt = makeHistoryReceipt(finishedAt: finishedAt, bytes: 42)
+
+        await state.persistDemoReceipt(receipt)
+
+        let expected = CleanFooterMetrics(
+            receipts: [StoredOperationReceipt(receipt: receipt, provenance: .fixtureSimulation)],
+            now: now
+        )
+        #expect(state.cleanFooter.lastClean == expected.lastClean)
+        #expect(state.cleanFooter.lifetimeReclaimed == ByteFormatter.string(Int64(42)))
+        #expect(state.cleanFooter.protectedPaths == "—")
+        #expect(state.cleanFooter.isDemoHistory)
+
+        let loaded = try await store.receipts()
+        #expect(loaded.count == 1)
+        #expect(loaded[0].provenance == .fixtureSimulation)
+        #expect(loaded[0].receipt.id == receipt.id)
+    }
+
+    @Test("startReadOnlyServices loads persisted receipts into the Clean footer")
+    func startReadOnlyServicesLoadsReceipts() async throws {
+        let directory = try temporaryReceiptDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try FileOperationReceiptStore(directoryURL: directory)
+        let finishedAt = Date().addingTimeInterval(-2 * 24 * 60 * 60)
+        let receipt = makeHistoryReceipt(finishedAt: finishedAt, bytes: 1_024)
+        try await store.save(receipt, provenance: .fixtureSimulation)
+
+        let state = AppState(engine: PreviewOnlyEngine(), receiptStore: store)
+        state.startReadOnlyServices()
+        try await waitUntil { state.cleanFooter.isDemoHistory }
+
+        #expect(state.cleanFooter.lastClean != "—")
+        #expect(state.cleanFooter.lifetimeReclaimed == ByteFormatter.string(Int64(1_024)))
+        #expect(state.storedReceipts.map(\.provenance) == [.fixtureSimulation])
+    }
+
+    @Test("Cancelled receipts do not inflate lifetime reclaimed")
+    func cancelledReceiptsAreExcludedFromLifetime() async throws {
+        let directory = try temporaryReceiptDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try FileOperationReceiptStore(directoryURL: directory)
+        let state = AppState(engine: PreviewOnlyEngine(), receiptStore: store)
+        let completed = makeHistoryReceipt(finishedAt: Date().addingTimeInterval(-60), bytes: 100)
+        let cancelled = OperationReceipt(
+            operation: .clean,
+            planFingerprint: String(repeating: "b", count: 64),
+            startedAt: Date().addingTimeInterval(-3),
+            finishedAt: Date().addingTimeInterval(-2),
+            outcome: .cancelled,
+            completedBytes: 0,
+            items: [
+                .init(title: "Clean item 1", detail: "Not started", status: .skipped),
+            ]
+        )
+        await state.persistDemoReceipt(completed)
+        await state.persistDemoReceipt(cancelled)
+
+        #expect(state.cleanFooter.lifetimeReclaimed == ByteFormatter.string(Int64(100)))
+        #expect(state.storedReceipts.count == 2)
+        #expect(state.cleanFooter.isDemoHistory)
+    }
+
+    @Test("AppState demo persistence never writes authenticated-helper provenance")
+    func demoPathDoesNotWriteHelperProvenance() throws {
+        let source = try String(contentsOf: sourceFile("AppState.swift"), encoding: .utf8)
+        #expect(source.contains("provenance: .fixtureSimulation"))
+        #expect(!source.contains("provenance: .authenticatedHelper"))
+    }
+
     @Test("prepareAppsExecution builds a demo presentation from the selection")
     func prepareAppsExecutionFromSelection() {
         let state = AppState()
@@ -99,6 +195,27 @@ struct AppStateTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("Sources/Burrow/\(name)")
+    }
+
+    private func makeHistoryReceipt(finishedAt: Date, bytes: Int64) -> OperationReceipt {
+        OperationReceipt(
+            operation: .clean,
+            planFingerprint: String(repeating: "a", count: 64),
+            startedAt: finishedAt.addingTimeInterval(-1),
+            finishedAt: finishedAt,
+            outcome: .completed,
+            completedBytes: bytes,
+            items: [
+                .init(title: "Clean item 1", detail: "Completed", status: .completed),
+            ]
+        )
+    }
+
+    private func temporaryReceiptDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("burrow-appstate-receipts-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
     }
 }
 

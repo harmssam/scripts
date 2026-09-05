@@ -33,10 +33,17 @@ struct CleanView: View {
 
             Spacer(minLength: 16)
 
-            HStack(spacing: 28) {
-                footerMetric("Last clean", "8 days ago")
-                footerMetric("Lifetime reclaimed", "148.2 GB")
-                footerMetric("Protected", "12 paths")
+            VStack(spacing: 8) {
+                if appState.cleanFooter.isDemoHistory {
+                    Text("DEMO HISTORY")
+                        .font(BurrowType.label)
+                        .foregroundStyle(.white.opacity(0.3))
+                }
+                HStack(spacing: 28) {
+                    footerMetric("Last clean", appState.cleanFooter.lastClean)
+                    footerMetric("Lifetime reclaimed", appState.cleanFooter.lifetimeReclaimed)
+                    footerMetric("Protected", appState.cleanFooter.protectedPaths)
+                }
             }
             .padding(.bottom, 22)
         }

@@ -56,6 +56,26 @@ struct OperationReceiptStoreTests {
         #expect(loaded.map(\.provenance) == [.authenticatedHelper, .fixtureSimulation])
     }
 
+    @Test("Unknown provenance is rejected and quarantined")
+    func unknownProvenanceFailsClosed() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try makeStore(directory: directory)
+        try await store.save(makeReceipt(), provenance: .fixtureSimulation)
+        let file = directory.appendingPathComponent("operation-receipts-v2.json")
+        var text = try String(contentsOf: file, encoding: .utf8)
+        text = text.replacingOccurrences(
+            of: "\"provenance\":\"fixtureSimulation\"",
+            with: "\"provenance\":\"authenticatedMole\""
+        )
+        try Data(text.utf8).write(to: file)
+
+        await #expect(throws: OperationReceiptStoreError.corruptedStore) {
+            _ = try await store.receipts()
+        }
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+    }
+
     @Test("Unexpected receipt text is rejected and never reaches disk")
     func rejectsSensitiveText() async throws {
         let directory = try temporaryDirectory()
