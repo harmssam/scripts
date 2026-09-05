@@ -11,8 +11,8 @@ struct AppStateTests {
     }
 
     @Test("Selected app size includes application and related files")
-    func selectedSize() {
-        let state = AppState()
+    func selectedSize() throws {
+        let state = try makeState()
         let app = UninstallPreviewPlan.Application(
             id: "test.app", name: "Test", bundleID: "test.app", uninstallName: "Test",
             path: "/Applications/Test.app", source: "Test", displaySize: "1 GB", sizeBytes: 1_000_000_000
@@ -41,7 +41,7 @@ struct AppStateTests {
 
     @Test("A preview still builds cleanExecution via FixtureExecutionPresentationFactory")
     func previewBuildsCleanExecution() async throws {
-        let state = AppState(engine: PreviewOnlyEngine())
+        let state = try makeState()
         state.previewClean()
         try await waitUntil { state.cleanPhase == .review }
         #expect(state.cleanPhase == .review)
@@ -52,7 +52,7 @@ struct AppStateTests {
 
     @Test("previewOptimize failure leaves optimizePlan nil")
     func optimizePreviewFailureClearsPlan() async throws {
-        let state = AppState(engine: PreviewOnlyEngine())
+        let state = try makeState()
         state.optimizePlan = PreviewFallbacks.optimize(reason: "stale")
         state.previewOptimize()
         try await waitUntil { !state.optimizeIsLoading }
@@ -89,7 +89,7 @@ struct AppStateTests {
         let finishedAt = now.addingTimeInterval(-8 * 24 * 60 * 60)
         let receipt = makeHistoryReceipt(finishedAt: finishedAt, bytes: 42)
 
-        await state.persistDemoReceipt(receipt)
+        try await state.persistDemoReceipt(receipt)
 
         let expected = CleanFooterMetrics(
             receipts: [StoredOperationReceipt(receipt: receipt, provenance: .fixtureSimulation)],
@@ -142,8 +142,8 @@ struct AppStateTests {
                 .init(title: "Clean item 1", detail: "Not started", status: .skipped),
             ]
         )
-        await state.persistDemoReceipt(completed)
-        await state.persistDemoReceipt(cancelled)
+        try await state.persistDemoReceipt(completed)
+        try await state.persistDemoReceipt(cancelled)
 
         #expect(state.cleanFooter.lifetimeReclaimed == ByteFormatter.string(Int64(100)))
         #expect(state.storedReceipts.count == 2)
@@ -157,9 +157,56 @@ struct AppStateTests {
         #expect(!source.contains("provenance: .authenticatedHelper"))
     }
 
+    @Test("A completed demo presentation persists one fixtureSimulation receipt")
+    func presentationReceiptPersistsOnce() async throws {
+        let directory = try temporaryReceiptDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try FileOperationReceiptStore(directoryURL: directory)
+        let state = AppState(engine: PreviewOnlyEngine(), receiptStore: store)
+        state.previewClean()
+        try await waitUntil { state.cleanPhase == .review }
+        let model = try #require(state.cleanExecution)
+        let fingerprint = try #require(state.cleanPlan?.metadata.fingerprint)
+
+        try model.beginConfirmation(currentPreviewFingerprint: fingerprint)
+        guard case .confirming(_, let confirmation, _) = model.state else {
+            Issue.record("Expected confirmation state")
+            return
+        }
+        try model.confirmAndExecute(
+            typedPhrase: confirmation.requiredPhrase,
+            currentPreviewFingerprint: fingerprint
+        )
+        await model.waitForExecutionToSettle()
+
+        guard case .receipt(_, let receipt) = model.state else {
+            Issue.record("Expected receipt state")
+            return
+        }
+        let loaded = try await store.receipts()
+        #expect(loaded.map(\.receipt.id) == [receipt.id])
+        #expect(loaded.map(\.provenance) == [.fixtureSimulation])
+        #expect(state.receiptPersistError == nil)
+    }
+
+    @Test("A failed demo save is not marked persisted and surfaces an error")
+    func failedSaveIsRetryableAndVisible() async throws {
+        let state = AppState(engine: PreviewOnlyEngine(), receiptStore: FailingReceiptStore())
+        let receipt = makeHistoryReceipt(finishedAt: Date().addingTimeInterval(-60), bytes: 42)
+        await #expect(throws: OperationReceiptStoreError.invalidReceipt) {
+            try await state.persistDemoReceipt(receipt)
+        }
+        #expect(state.storedReceipts.isEmpty)
+        #expect(state.receiptPersistError == "Demo history could not be saved.")
+        #expect(!state.cleanFooter.isDemoHistory)
+        await #expect(throws: OperationReceiptStoreError.invalidReceipt) {
+            try await state.persistDemoReceipt(receipt)
+        }
+    }
+
     @Test("prepareAppsExecution builds a demo presentation from the selection")
-    func prepareAppsExecutionFromSelection() {
-        let state = AppState()
+    func prepareAppsExecutionFromSelection() throws {
+        let state = try makeState()
         let app = UninstallPreviewPlan.Application(
             id: "test.app", name: "Test", bundleID: "test.app", uninstallName: "Test",
             path: "/Applications/Test.app", source: "Test", displaySize: "1 GB", sizeBytes: 1_000_000_000
@@ -197,6 +244,13 @@ struct AppStateTests {
             .appendingPathComponent("Sources/Burrow/\(name)")
     }
 
+    private func makeState(engine: any EngineClientProtocol = PreviewOnlyEngine()) throws -> AppState {
+        AppState(
+            engine: engine,
+            receiptStore: try FileOperationReceiptStore(directoryURL: try temporaryReceiptDirectory())
+        )
+    }
+
     private func makeHistoryReceipt(finishedAt: Date, bytes: Int64) -> OperationReceipt {
         OperationReceipt(
             operation: .clean,
@@ -217,6 +271,14 @@ struct AppStateTests {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
     }
+}
+
+private actor FailingReceiptStore: OperationReceiptStoring {
+    func save(_ receipt: OperationReceipt, provenance: OperationReceiptProvenance) async throws {
+        throw OperationReceiptStoreError.invalidReceipt
+    }
+
+    func receipts() async throws -> [StoredOperationReceipt] { [] }
 }
 
 private actor PreviewOnlyEngine: EngineClientProtocol {

@@ -52,7 +52,7 @@ final class ExecutionPresentationModel {
 
     private let coordinator: OperationCoordinator
     private let now: @Sendable () -> Date
-    private let persistReceipt: (@MainActor (OperationReceipt) async -> Void)?
+    private let persistReceipt: (@MainActor (OperationReceipt) async throws -> Void)?
     private var executionTask: Task<Void, Never>?
     private var activeRunID: UUID?
     private var persistedReceiptID: UUID?
@@ -62,7 +62,7 @@ final class ExecutionPresentationModel {
         mode: ExecutionPresentationMode,
         coordinator: OperationCoordinator,
         now: @escaping @Sendable () -> Date = Date.init,
-        persistReceipt: (@MainActor (OperationReceipt) async -> Void)? = nil
+        persistReceipt: (@MainActor (OperationReceipt) async throws -> Void)? = nil
     ) {
         self.state = .review(review)
         self.mode = mode
@@ -246,8 +246,12 @@ final class ExecutionPresentationModel {
 
     private func persistFixtureReceiptIfNeeded(_ receipt: OperationReceipt) async {
         guard mode == .fixtureSimulation, persistedReceiptID != receipt.id else { return }
-        persistedReceiptID = receipt.id
-        await persistReceipt?(receipt)
+        do {
+            try await persistReceipt?(receipt)
+            persistedReceiptID = receipt.id
+        } catch {
+            // Leave unmarked so a later persist can retry; AppState surfaces the save error.
+        }
     }
 
     private func transitionForActionFailure(_ error: Error) {
@@ -291,7 +295,7 @@ enum FixtureExecutionPresentationFactory {
     static func clean(
         _ preview: CleanPreviewPlan,
         now: Date = Date(),
-        persistReceipt: (@MainActor (OperationReceipt) async -> Void)? = nil
+        persistReceipt: (@MainActor (OperationReceipt) async throws -> Void)? = nil
     ) throws -> ExecutionPresentationModel {
         let entries = preview.categories.map { ($0.id, $0.reclaimableBytes ?? 0) }
         guard !entries.isEmpty else { throw ExecutionPlanValidationError.emptyPlan }
@@ -314,7 +318,7 @@ enum FixtureExecutionPresentationFactory {
     static func optimize(
         _ preview: OptimizePreviewPlan,
         now: Date = Date(),
-        persistReceipt: (@MainActor (OperationReceipt) async -> Void)? = nil
+        persistReceipt: (@MainActor (OperationReceipt) async throws -> Void)? = nil
     ) throws -> ExecutionPresentationModel {
         let tasks = preview.tasks.filter { $0.disposition == .wouldApply }
         let entries = tasks.map { ($0.id, Int64(0)) }
@@ -338,7 +342,7 @@ enum FixtureExecutionPresentationFactory {
     static func uninstall(
         _ preview: UninstallPreviewPlan,
         now: Date = Date(),
-        persistReceipt: (@MainActor (OperationReceipt) async -> Void)? = nil
+        persistReceipt: (@MainActor (OperationReceipt) async throws -> Void)? = nil
     ) throws -> ExecutionPresentationModel {
         let entries = preview.applications.map { ($0.id, $0.sizeBytes ?? 0) }
         guard !entries.isEmpty else { throw ExecutionPlanValidationError.emptyPlan }
@@ -364,7 +368,7 @@ enum FixtureExecutionPresentationFactory {
         engineVersion: String,
         entries: [Entry],
         now: Date,
-        persistReceipt: (@MainActor (OperationReceipt) async -> Void)?,
+        persistReceipt: (@MainActor (OperationReceipt) async throws -> Void)?,
         operation: (Int, Entry) -> ExecutionPlanOperation
     ) throws -> ExecutionPresentationModel {
         let operations = entries.enumerated().map(operation)

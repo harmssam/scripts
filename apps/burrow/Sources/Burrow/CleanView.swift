@@ -26,7 +26,7 @@ struct CleanView: View {
                     .disabled(scanProgress != nil)
             }
 
-            if let error = appState.cleanError {
+            if let error = appState.cleanError ?? appState.receiptPersistError {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
                     .font(BurrowType.data).foregroundStyle(Color(hex: 0xE6B75F))
             }

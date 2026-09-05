@@ -60,6 +60,7 @@ final class AppState {
     var appsError: String?
     var appsExecution: ExecutionPresentationModel?
     private(set) var storedReceipts: [StoredOperationReceipt] = []
+    private(set) var receiptPersistError: String?
 
     private let engine: any EngineClientProtocol
     private let receiptStore: any OperationReceiptStoring
@@ -227,13 +228,16 @@ final class AppState {
         scan(directory: URL(fileURLWithPath: report.path))
     }
 
-    func persistDemoReceipt(_ receipt: OperationReceipt) async {
-        guard persistedReceiptIDs.insert(receipt.id).inserted else { return }
+    func persistDemoReceipt(_ receipt: OperationReceipt) async throws {
+        guard !persistedReceiptIDs.contains(receipt.id) else { return }
         do {
             try await receiptStore.save(receipt, provenance: .fixtureSimulation)
+            persistedReceiptIDs.insert(receipt.id)
+            receiptPersistError = nil
             await loadStoredReceipts()
         } catch {
-            persistedReceiptIDs.remove(receipt.id)
+            receiptPersistError = "Demo history could not be saved."
+            throw error
         }
     }
 
@@ -246,9 +250,9 @@ final class AppState {
         }
     }
 
-    private func fixtureReceiptPersister() -> (@MainActor (OperationReceipt) async -> Void) {
+    private func fixtureReceiptPersister() -> (@MainActor (OperationReceipt) async throws -> Void) {
         { [weak self] receipt in
-            await self?.persistDemoReceipt(receipt)
+            try await self?.persistDemoReceipt(receipt)
         }
     }
 
