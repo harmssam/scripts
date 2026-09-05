@@ -106,6 +106,49 @@ struct FixtureRootTransportTests {
         #expect(FileManager.default.fileExists(atPath: occupied.appendingPathComponent("child.txt").path))
     }
 
+    @Test("replaceFile fails closed without mutating the fixture")
+    func replaceFileFailsClosed() async throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("keep.plist")
+        let original = Data("keep".utf8)
+        try original.write(to: file)
+        let transport = FixtureRootOperationTransport(rootURL: root)
+        let plan = try makePlan(
+            action: .replaceFile, path: file.path, nodeKind: .file, byteCount: Int64(original.count),
+            kind: .optimize
+        )
+
+        await #expect(throws: HelperAuthorizationError.invalidPlan) {
+            _ = try await self.collect(transport.execute(validatedPlan: plan))
+        }
+        #expect(try Data(contentsOf: file) == original)
+    }
+
+    @Test("removeFile and moveToTrash require a regular file in the fixture root")
+    func fileActionsRequireRegularFile() async throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let directory = root.appendingPathComponent("not-a-file", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("trashed.cache")
+        try Data("bye".utf8).write(to: file)
+        let transport = FixtureRootOperationTransport(rootURL: root)
+
+        await #expect(throws: HelperAuthorizationError.targetChanged) {
+            _ = try await self.collect(
+                transport.execute(validatedPlan: try self.makePlan(path: directory.path, byteCount: 0))
+            )
+        }
+        #expect(FileManager.default.fileExists(atPath: directory.path))
+
+        let events = try await collect(
+            transport.execute(validatedPlan: try makePlan(action: .moveToTrash, path: file.path, byteCount: 3, kind: .uninstall))
+        )
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+        #expect(events.last?.kind == .completed)
+    }
+
     private func makePlan(
         action: ExecutionAction = .removeFile,
         path: String,

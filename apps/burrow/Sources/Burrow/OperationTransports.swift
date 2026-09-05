@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Production default until a separately signed and audited helper exists.
@@ -102,49 +103,102 @@ actor FixtureRootOperationTransport: PrivilegedOperationTransport {
     func cancel(planFingerprint: String) async { cancelledFingerprints.insert(planFingerprint) }
 
     private func run(_ plan: ExecutionPlan) throws -> [ExecutionProgressEvent] {
-        let targets = try plan.operations.map { operation in
-            (operation, try containedURL(for: operation.target.path, action: operation.action))
-        }
-        for (operation, url) in targets { try apply(operation, at: url) }
+        let rootFD = try openRoot()
+        defer { Darwin.close(rootFD) }
+        for operation in plan.operations { try apply(operation, rootFD: rootFD) }
         return progressEvents(for: plan)
     }
 
-    private func containedURL(for path: String, action: ExecutionAction) throws -> URL {
-        switch action {
-        case .removeFile, .removeDirectory, .moveToTrash: break
-        case .replaceFile: throw HelperAuthorizationError.invalidPlan
-        }
-        guard path.first == "/", !path.split(separator: "/").contains("..") else {
-            throw HelperAuthorizationError.unsafePathResolution
-        }
-        let standardizedRoot = (rootURL.path as NSString).standardizingPath
-        let standardizedPath = (path as NSString).standardizingPath
-        let resolvedRoot = rootURL.resolvingSymlinksInPath()
-        let resolvedPath = URL(fileURLWithPath: path).resolvingSymlinksInPath()
-        guard isStrictlyInside(standardizedPath, root: standardizedRoot),
-              isStrictlyInside(resolvedPath.path, root: resolvedRoot.path),
-              isStrictlyInside((resolvedPath.path as NSString).standardizingPath, root: (resolvedRoot.path as NSString).standardizingPath)
-        else {
-            throw HelperAuthorizationError.unsafePathResolution
-        }
-        return URL(fileURLWithPath: standardizedPath)
+    private func openRoot() throws -> Int32 {
+        let path = rootURL.resolvingSymlinksInPath().path
+        let fd = path.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW) }
+        guard fd >= 0 else { throw HelperAuthorizationError.unsafePathResolution }
+        return fd
     }
 
-    private func apply(_ operation: ExecutionPlanOperation, at url: URL) throws {
+    private func apply(_ operation: ExecutionPlanOperation, rootFD: Int32) throws {
         switch operation.action {
+        case .replaceFile: throw HelperAuthorizationError.invalidPlan
+        case .removeFile, .removeDirectory, .moveToTrash: break
+        }
+        let components = try relativeComponents(path: operation.target.path)
+        var dirFD = rootFD
+        var opened: [Int32] = []
+        defer { for fd in opened.reversed() { Darwin.close(fd) } }
+        for component in components.dropLast() {
+            let next = component.withCString {
+                Darwin.openat(dirFD, $0, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
+            }
+            guard next >= 0 else { throw HelperAuthorizationError.unsafePathResolution }
+            opened.append(next)
+            dirFD = next
+        }
+        try unlinkLast(parentFD: dirFD, name: components[components.count - 1], action: operation.action)
+    }
+
+    private func unlinkLast(parentFD: Int32, name: String, action: ExecutionAction) throws {
+        let openFlags: Int32
+        let unlinkFlags: Int32
+        switch action {
         case .removeFile, .moveToTrash:
-            do { try FileManager.default.removeItem(at: url) }
-            catch { throw HelperAuthorizationError.targetChanged }
+            openFlags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW
+            unlinkFlags = 0
         case .removeDirectory:
-            let entries: [String]
-            do { entries = try FileManager.default.contentsOfDirectory(atPath: url.path) }
-            catch { throw HelperAuthorizationError.targetChanged }
-            guard entries.isEmpty else { throw HelperAuthorizationError.directoryNotEmpty }
-            do { try FileManager.default.removeItem(at: url) }
-            catch { throw HelperAuthorizationError.targetChanged }
+            openFlags = O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
+            unlinkFlags = AT_REMOVEDIR
         case .replaceFile:
             throw HelperAuthorizationError.invalidPlan
         }
+
+        let fd = name.withCString { Darwin.openat(parentFD, $0, openFlags) }
+        if fd < 0 {
+            if errno == ELOOP { throw HelperAuthorizationError.unsafePathResolution }
+            throw HelperAuthorizationError.targetChanged
+        }
+        defer { Darwin.close(fd) }
+
+        var st = Darwin.stat()
+        guard Darwin.fstat(fd, &st) == 0 else { throw HelperAuthorizationError.targetChanged }
+        let type = st.st_mode & S_IFMT
+        switch action {
+        case .removeFile, .moveToTrash:
+            guard type == S_IFREG else { throw HelperAuthorizationError.targetChanged }
+        case .removeDirectory:
+            guard type == S_IFDIR else { throw HelperAuthorizationError.targetChanged }
+        case .replaceFile:
+            throw HelperAuthorizationError.invalidPlan
+        }
+
+        // Tests-only: trash is unlinkat in-tree; trashItem would leave the fixture root.
+        let result = name.withCString { Darwin.unlinkat(parentFD, $0, unlinkFlags) }
+        if result != 0 {
+            if unlinkFlags == AT_REMOVEDIR, errno == ENOTEMPTY || errno == EEXIST {
+                throw HelperAuthorizationError.directoryNotEmpty
+            }
+            throw HelperAuthorizationError.targetChanged
+        }
+    }
+
+    private func relativeComponents(path: String) throws -> [String] {
+        guard path.first == "/", !path.split(separator: "/").contains("..") else {
+            throw HelperAuthorizationError.unsafePathResolution
+        }
+        let standardized = (path as NSString).standardizingPath
+        let roots = [
+            (rootURL.path as NSString).standardizingPath,
+            (rootURL.resolvingSymlinksInPath().path as NSString).standardizingPath
+        ]
+        guard let root = roots.first(where: { isStrictlyInside(standardized, root: $0) }) else {
+            throw HelperAuthorizationError.unsafePathResolution
+        }
+        let relative = String(standardized.dropFirst(root.count + 1))
+        let components = relative.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard !components.isEmpty,
+              components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." })
+        else {
+            throw HelperAuthorizationError.unsafePathResolution
+        }
+        return components
     }
 
     private func progressEvents(for plan: ExecutionPlan) -> [ExecutionProgressEvent] {
