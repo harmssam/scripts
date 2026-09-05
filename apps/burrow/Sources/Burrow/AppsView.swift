@@ -5,8 +5,7 @@ struct AppsView: View {
     @Environment(AppState.self) private var appState
     @State private var query = ""
     @State private var subtab = "Uninstall"
-    @State private var showingRun = false
-    @State private var executionModel: ExecutionPresentationModel?
+    @State private var presentedExecution: PresentedExecution?
     private let atmosphere = FeatureAtmosphere.apps
 
     private var filteredApps: [UninstallPreviewPlan.Application] {
@@ -67,14 +66,12 @@ struct AppsView: View {
         .onChange(of: appState.selectedAppIDs) { _, _ in
             appState.prepareAppsExecution()
         }
-        .sheet(isPresented: $showingRun) {
-            if let executionModel {
-                ExecutionFlowSheet(
-                    model: executionModel,
-                    currentPreviewFingerprint: appState.selectedUninstallPlan.metadata.fingerprint,
-                    accent: atmosphere.accent
-                )
-            }
+        .sheet(item: $presentedExecution) { presented in
+            ExecutionFlowSheet(
+                model: presented.model,
+                currentPreviewFingerprint: presented.fingerprint,
+                accent: atmosphere.accent
+            )
         }
     }
 
@@ -150,8 +147,10 @@ struct AppsView: View {
             Button("Uninstall") {
                 appState.prepareAppsExecution()
                 guard let model = appState.appsExecution else { return }
-                executionModel = model
-                showingRun = true
+                presentedExecution = PresentedExecution(
+                    model: model,
+                    fingerprint: appState.selectedUninstallPlan.metadata.fingerprint
+                )
             }
                 .buttonStyle(PrimaryCapsuleButtonStyle(accent: atmosphere.accent))
                 .disabled(appState.selectedAppIDs.isEmpty || appState.appsExecution == nil)

@@ -2,8 +2,7 @@ import SwiftUI
 
 struct CleanView: View {
     @Environment(AppState.self) private var appState
-    @State private var showingRun = false
-    @State private var executionModel: ExecutionPresentationModel?
+    @State private var presentedExecution: PresentedExecution?
     private let atmosphere = FeatureAtmosphere.clean
 
     var body: some View {
@@ -43,14 +42,12 @@ struct CleanView: View {
         }
         .padding(.horizontal, 38)
         .animation(.easeInOut(duration: 0.24), value: appState.cleanPhase)
-        .sheet(isPresented: $showingRun) {
-            if let executionModel, let plan = appState.cleanPlan {
-                ExecutionFlowSheet(
-                    model: executionModel,
-                    currentPreviewFingerprint: plan.metadata.fingerprint,
-                    accent: atmosphere.accent
-                )
-            }
+        .sheet(item: $presentedExecution) { presented in
+            ExecutionFlowSheet(
+                model: presented.model,
+                currentPreviewFingerprint: presented.fingerprint,
+                accent: atmosphere.accent
+            )
         }
     }
 
@@ -115,9 +112,9 @@ struct CleanView: View {
                 Spacer()
                 Button("Close preview") { appState.cleanPhase = .complete }.buttonStyle(.plain)
                 Button("Clean now") {
-                    guard let model = appState.cleanExecution else { return }
-                    executionModel = model
-                    showingRun = true
+                    guard let model = appState.cleanExecution,
+                          let fingerprint = appState.cleanPlan?.metadata.fingerprint else { return }
+                    presentedExecution = PresentedExecution(model: model, fingerprint: fingerprint)
                 }
                     .buttonStyle(PrimaryCapsuleButtonStyle(accent: atmosphere.accent))
                     .disabled(appState.cleanExecution == nil)

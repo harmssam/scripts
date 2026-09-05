@@ -43,14 +43,54 @@ struct AppStateTests {
     func previewBuildsCleanExecution() async throws {
         let state = AppState(engine: PreviewOnlyEngine())
         state.previewClean()
-        let deadline = Date().addingTimeInterval(2)
-        while state.cleanPhase != .review, Date() < deadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await waitUntil { state.cleanPhase == .review }
         #expect(state.cleanPhase == .review)
         let execution = try #require(state.cleanExecution)
         #expect(execution.mode == .fixtureSimulation)
         #expect(execution.review?.previewFingerprint == state.cleanPlan?.metadata.fingerprint)
+    }
+
+    @Test("previewOptimize failure leaves optimizePlan nil")
+    func optimizePreviewFailureClearsPlan() async throws {
+        let state = AppState(engine: PreviewOnlyEngine())
+        state.optimizePlan = PreviewFallbacks.optimize(reason: "stale")
+        state.previewOptimize()
+        try await waitUntil { !state.optimizeIsLoading }
+        #expect(state.optimizePlan == nil)
+        #expect(state.optimizeExecution == nil)
+        #expect(state.optimizeError != nil)
+    }
+
+    @Test("prepareAppsExecution builds a demo presentation from the selection")
+    func prepareAppsExecutionFromSelection() {
+        let state = AppState()
+        let app = UninstallPreviewPlan.Application(
+            id: "test.app", name: "Test", bundleID: "test.app", uninstallName: "Test",
+            path: "/Applications/Test.app", source: "Test", displaySize: "1 GB", sizeBytes: 1_000_000_000
+        )
+        state.uninstallPlan = UninstallPreviewPlan(
+            metadata: .init(
+                schemaVersion: PreviewPlanSchema.current,
+                fingerprint: PreviewFingerprint.make(kind: "test", engineVersion: "test", components: [app.id]),
+                engineVersion: "test", source: .moleCompatibilityAdapter, warnings: []
+            ),
+            applications: [app]
+        )
+        state.selectedAppIDs = [app.id]
+        state.prepareAppsExecution()
+        #expect(state.appsExecution?.mode == .fixtureSimulation)
+        #expect(state.appsExecution?.review?.previewFingerprint == state.selectedUninstallPlan.metadata.fingerprint)
+
+        state.selectedAppIDs.removeAll()
+        state.prepareAppsExecution()
+        #expect(state.appsExecution == nil)
+    }
+
+    private func waitUntil(_ condition: @escaping @MainActor () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(2)
+        while !condition(), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
     }
 
     private func sourceFile(_ name: String) -> URL {

@@ -52,15 +52,50 @@ struct EngineContractTests {
     @Test("Engine protocol and client have no mutating execute methods")
     func noMutatingExecuteMethods() throws {
         let _: any EngineClientProtocol = ReadOnlyEngineClient()
-        let sourceURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("Sources/Burrow/EngineClient.swift")
-        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+        let source = try burrowSource("EngineClient.swift")
         #expect(!source.contains("func executeClean("))
         #expect(!source.contains("func executeOptimize("))
         #expect(!source.contains("func executeUninstall("))
+        #expect(source.contains("burrow-plan-v1"))
+        #expect(source.contains("guard version.contains(Self.structuredProtocolMarker)"))
+    }
+
+    @Test("Clean, optimize, and uninstall argv never launch without a preview or plan flag")
+    func mutatingArgvIsGated() throws {
+        let files = ["EngineClient.swift", "AppState.swift", "CleanView.swift", "OptimizeView.swift", "AppsView.swift"]
+        for file in files {
+            try assertSafeMaintenanceArgv(in: burrowSource(file), file: file)
+        }
+        #expect(
+            try MoleEngineClient.uninstallPlanArguments(applicationPaths: ["/Applications/-Example.app"])
+                == ["uninstall", "--plan-json", "--", "/Applications/-Example.app"]
+        )
+    }
+
+    private func burrowSource(_ name: String) throws -> String {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/Burrow/\(name)")
+        return try String(contentsOf: url, encoding: .utf8)
+    }
+
+    private func assertSafeMaintenanceArgv(in source: String, file: String) throws {
+        for command in ["clean", "optimize", "uninstall"] {
+            let needle = "[\"\(command)\""
+            var searchStart = source.startIndex
+            while let start = source.range(of: needle, range: searchStart..<source.endIndex) {
+                guard let close = source[start.upperBound...].firstIndex(of: "]") else {
+                    Issue.record("Unterminated \(command) argv in \(file)")
+                    return
+                }
+                let literal = String(source[start.lowerBound...close])
+                let gated = literal.contains("--dry-run") || literal.contains("--list") || literal.contains("--plan-json")
+                #expect(gated, "Bare \(command) argv in \(file): \(literal)")
+                searchStart = source.index(after: close)
+            }
+        }
     }
 }
 

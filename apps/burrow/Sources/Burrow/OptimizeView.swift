@@ -2,8 +2,7 @@ import SwiftUI
 
 struct OptimizeView: View {
     @Environment(AppState.self) private var appState
-    @State private var showingRun = false
-    @State private var executionModel: ExecutionPresentationModel?
+    @State private var presentedExecution: PresentedExecution?
     private let atmosphere = FeatureAtmosphere.optimize
 
     var body: some View {
@@ -39,7 +38,7 @@ struct OptimizeView: View {
             .frame(maxWidth: 540, maxHeight: 280).burrowPanel()
             .overlay {
                 if displayTasks.isEmpty {
-                    Text(appState.optimizeIsLoading ? "Building a safe preview…" : "Awaiting dry-run preview")
+                    Text(emptyTasksCopy)
                         .font(BurrowType.data).foregroundStyle(.white.opacity(0.45))
                 }
             }
@@ -59,31 +58,33 @@ struct OptimizeView: View {
                 }
                 .buttonStyle(PrimaryCapsuleButtonStyle(accent: atmosphere.accent))
                 .disabled(appState.optimizeIsLoading)
-                if appState.optimizePlan != nil {
+                if let model = appState.optimizeExecution,
+                   let fingerprint = appState.optimizePlan?.metadata.fingerprint {
                     Button("Optimize now") {
-                        guard let model = appState.optimizeExecution else { return }
-                        executionModel = model
-                        showingRun = true
+                        presentedExecution = PresentedExecution(model: model, fingerprint: fingerprint)
                     }
-                        .buttonStyle(PrimaryCapsuleButtonStyle(accent: atmosphere.accent))
-                        .disabled(appState.optimizeExecution == nil)
+                    .buttonStyle(PrimaryCapsuleButtonStyle(accent: atmosphere.accent))
                 }
             }
             Spacer(minLength: 12)
         }
-        .sheet(isPresented: $showingRun) {
-            if let executionModel, let plan = appState.optimizePlan {
-                ExecutionFlowSheet(
-                    model: executionModel,
-                    currentPreviewFingerprint: plan.metadata.fingerprint,
-                    accent: atmosphere.accent
-                )
-            }
+        .sheet(item: $presentedExecution) { presented in
+            ExecutionFlowSheet(
+                model: presented.model,
+                currentPreviewFingerprint: presented.fingerprint,
+                accent: atmosphere.accent
+            )
         }
     }
 
     private var displayTasks: [OptimizePreviewPlan.Task] {
         appState.optimizePlan?.tasks ?? []
+    }
+
+    private var emptyTasksCopy: String {
+        if appState.optimizeIsLoading { return "Building a safe preview…" }
+        if appState.optimizePlan != nil { return "No maintenance tasks in this preview" }
+        return "Awaiting dry-run preview"
     }
 
     private func icon(for disposition: OptimizePreviewPlan.Disposition) -> String {

@@ -294,3 +294,9 @@ enum CleanPhase: Equatable {
     case review
     case complete
 }
+
+struct PresentedExecution: Identifiable {
+    let id = UUID()
+    let model: ExecutionPresentationModel
+    let fingerprint: String
+}
