@@ -69,7 +69,7 @@ struct AppsView: View {
         .sheet(item: $presentedExecution) { presented in
             ExecutionFlowSheet(
                 model: presented.model,
-                currentPreviewFingerprint: presented.fingerprint,
+                currentPreviewFingerprint: appState.selectedUninstallPlan.metadata.fingerprint,
                 accent: atmosphere.accent
             )
         }

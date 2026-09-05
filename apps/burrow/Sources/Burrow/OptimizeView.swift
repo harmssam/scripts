@@ -71,7 +71,7 @@ struct OptimizeView: View {
         .sheet(item: $presentedExecution) { presented in
             ExecutionFlowSheet(
                 model: presented.model,
-                currentPreviewFingerprint: presented.fingerprint,
+                currentPreviewFingerprint: appState.optimizePlan?.metadata.fingerprint ?? presented.fingerprint,
                 accent: atmosphere.accent
             )
         }

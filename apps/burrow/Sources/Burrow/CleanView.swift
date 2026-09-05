@@ -45,7 +45,7 @@ struct CleanView: View {
         .sheet(item: $presentedExecution) { presented in
             ExecutionFlowSheet(
                 model: presented.model,
-                currentPreviewFingerprint: presented.fingerprint,
+                currentPreviewFingerprint: appState.cleanPlan?.metadata.fingerprint ?? presented.fingerprint,
                 accent: atmosphere.accent
             )
         }
